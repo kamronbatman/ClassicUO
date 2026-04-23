@@ -272,6 +272,42 @@ namespace ClassicUO.UnitTests.Game.Scenes
         }
 
         [Fact]
+        public void AppendCommands_CopiesAllEntriesInOrder()
+        {
+            // AppendCommands is the bulk-copy primitive used by per-gump retained
+            // render caches to replay a previously-built command block into the
+            // per-frame stream. Order and count must be preserved exactly.
+            var source = new System.Collections.Generic.List<GumpDrawCommand>
+            {
+                GumpDrawCommand.CreateClipPush(new Rectangle(0, 0, 10, 10)),
+                GumpDrawCommand.CreateCallback(static _ => true),
+                GumpDrawCommand.CreateText(null, 1, 2, 3f, 1f, 0),
+                GumpDrawCommand.CreateClipPop(),
+            };
+
+            var lists = new RenderLists();
+            lists.AppendCommands(source);
+
+            Assert.Equal(source.Count, lists.GumpCommandCount);
+            Assert.Equal(GumpCommandKind.ClipPush, lists.PeekGumpCommand(0).Kind);
+            Assert.Equal(GumpCommandKind.Callback, lists.PeekGumpCommand(1).Kind);
+            Assert.Equal(GumpCommandKind.Text, lists.PeekGumpCommand(2).Kind);
+            Assert.Equal(GumpCommandKind.ClipPop, lists.PeekGumpCommand(3).Kind);
+        }
+
+        [Fact]
+        public void AppendCommands_WithNullOrEmpty_IsNoOp()
+        {
+            var lists = new RenderLists();
+
+            lists.AppendCommands(null);
+            Assert.Equal(0, lists.GumpCommandCount);
+
+            lists.AppendCommands(new System.Collections.Generic.List<GumpDrawCommand>());
+            Assert.Equal(0, lists.GumpCommandCount);
+        }
+
+        [Fact]
         public void AddGumpNoAtlas_TextPath_NullShortCircuitsWithoutAllocation()
         {
             // Same allocation-budget guard for the typed text overload. With

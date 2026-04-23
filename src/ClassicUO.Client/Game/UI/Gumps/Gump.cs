@@ -133,6 +133,85 @@ namespace ClassicUO.Game.UI.Gumps
             return IsVisible && base.AddToRenderLists(renderLists, x, y, ref layerDepthRef);
         }
 
+        // ───── Retained-mode render cache ─────
+        //
+        // When EnableRenderCache is true, the gump's emitted GumpDrawCommand
+        // stream is cached between frames. The cache is replayed into the
+        // per-frame unified RenderLists on subsequent frames as long as nothing
+        // in the gump has changed. A change bumps _renderVersion, which causes
+        // the next EmitCommandsInto call to rebuild the cache from scratch.
+        //
+        // Commit 4 lays the infrastructure but leaves EnableRenderCache default-
+        // off so behaviour is identical to pre-cache. Commit 5 wires render-
+        // affecting Control setters to call InvalidateRenderCache; Commit 6
+        // adds a pure-translation fast path for dragged gumps.
+        //
+        // Gumps that emit any GumpCommandKind.Callback commands can still be
+        // cached because the Func reference is stored in the struct; the
+        // closure captures its own state. Cache invalidation is still the
+        // owning gump's responsibility when that captured state would change.
+
+        private List<GumpDrawCommand> _renderCache;
+        private int _renderVersion;
+        private int _lastBuiltRenderVersion = -1;
+
+        /// <summary>
+        /// Opt-in flag for the retained-mode command cache. When true, the
+        /// gump's emitted command stream is snapshotted and replayed unchanged
+        /// on subsequent frames until <see cref="InvalidateRenderCache"/> fires.
+        /// Default false to preserve pre-cache behaviour until callers are
+        /// audited for render-affecting setters.
+        /// </summary>
+        public bool EnableRenderCache { get; set; }
+
+        /// <summary>
+        /// Bump the render version, forcing the next frame to rebuild the
+        /// cached command stream. Safe to call every frame; the rebuild only
+        /// actually runs on the next <see cref="EmitCommandsInto"/> call.
+        /// </summary>
+        internal void InvalidateRenderCache()
+        {
+            _renderVersion++;
+        }
+
+        /// <summary>
+        /// Emit this gump's draw commands into the supplied <see cref="RenderLists"/>.
+        /// If <see cref="EnableRenderCache"/> is true and the cache is current,
+        /// replays the cached command stream without re-walking the control tree.
+        /// Otherwise rebuilds the cache by calling <see cref="AddToRenderLists"/>.
+        /// </summary>
+        internal void EmitCommandsInto(RenderLists target, int gumpX, int gumpY, ref float layerDepth)
+        {
+            if (!EnableRenderCache)
+            {
+                AddToRenderLists(target, gumpX, gumpY, ref layerDepth);
+                return;
+            }
+
+            if (_renderCache == null || _renderVersion != _lastBuiltRenderVersion)
+            {
+                // Rebuild: emit directly into target and snapshot the range of
+                // commands we just produced.
+                int startIndex = target.GumpCommandCount;
+                AddToRenderLists(target, gumpX, gumpY, ref layerDepth);
+                int endIndex = target.GumpCommandCount;
+
+                _renderCache ??= new List<GumpDrawCommand>(endIndex - startIndex);
+                _renderCache.Clear();
+                for (int i = startIndex; i < endIndex; i++)
+                {
+                    _renderCache.Add(target.PeekGumpCommand(i));
+                }
+
+                _lastBuiltRenderVersion = _renderVersion;
+            }
+            else
+            {
+                // Cache hit: replay the cached commands into target.
+                target.AppendCommands(_renderCache);
+            }
+        }
+
         public override void OnButtonClick(int buttonID)
         {
             if (!IsDisposed && LocalSerial != 0)

@@ -432,6 +432,22 @@ namespace ClassicUO.Game.Scenes
             _gumpCommands.Add(GumpDrawCommand.CreateClipPop());
         }
 
+        /// <summary>
+        /// Bulk-append a pre-built block of commands (typically a per-gump retained cache)
+        /// into this frame's command stream. Preserves insertion order within the block
+        /// so batching and clip-stack ordering remain correct.
+        /// </summary>
+        public void AppendCommands(List<GumpDrawCommand> source)
+        {
+            if (source == null || source.Count == 0)
+            {
+                return;
+            }
+
+            _gumpCommands.EnsureCapacity(_gumpCommands.Count + source.Count);
+            _gumpCommands.AddRange(source);
+        }
+
         // ───── Test accessors ─────
 
         internal int GumpCommandCount => _gumpCommands.Count;
