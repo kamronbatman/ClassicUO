@@ -147,13 +147,69 @@ namespace ClassicUO.Game.UI.Controls
             set => _acceptMouseInput = value;
         }
 
-        public ref int X => ref _bounds.X;
+        // X / Y / Width / Height used to be `ref int` accessors returning a
+        // reference into the underlying Rectangle, which let callers mutate the
+        // field directly with no setter interception. That meant any layout
+        // recompute (e.g. `child.Y = Height - offset;` inside an Update override)
+        // silently bypassed NotifyRenderDirty, leaving the retained render
+        // cache stale. Converting to full properties funnels every write through
+        // a change-detect + notify. A repo-wide grep confirmed there are no
+        // callers of `ref control.X` style usages — only the declarations
+        // themselves — so dropping ref is safe. Compound-assignment forms
+        // (`control.X += 5`, `control.X++`) still compile fine against regular
+        // properties.
 
-        public ref int Y => ref _bounds.Y;
+        public int X
+        {
+            get => _bounds.X;
+            set
+            {
+                if (_bounds.X != value)
+                {
+                    _bounds.X = value;
+                    NotifyRenderDirty();
+                }
+            }
+        }
 
-        public ref int Width => ref _bounds.Width;
+        public int Y
+        {
+            get => _bounds.Y;
+            set
+            {
+                if (_bounds.Y != value)
+                {
+                    _bounds.Y = value;
+                    NotifyRenderDirty();
+                }
+            }
+        }
 
-        public ref int Height => ref _bounds.Height;
+        public int Width
+        {
+            get => _bounds.Width;
+            set
+            {
+                if (_bounds.Width != value)
+                {
+                    _bounds.Width = value;
+                    NotifyRenderDirty();
+                }
+            }
+        }
+
+        public int Height
+        {
+            get => _bounds.Height;
+            set
+            {
+                if (_bounds.Height != value)
+                {
+                    _bounds.Height = value;
+                    NotifyRenderDirty();
+                }
+            }
+        }
 
         public int ParentX => Parent != null ? Parent.X + Parent.ParentX : 0;
 
