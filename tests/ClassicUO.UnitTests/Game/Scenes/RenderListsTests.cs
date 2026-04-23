@@ -308,6 +308,112 @@ namespace ClassicUO.UnitTests.Game.Scenes
         }
 
         [Fact]
+        public void WithOffset_ShiftsSpriteDestOnly()
+        {
+            // Sprites carry their screen rect in Dest; Source is the atlas UV
+            // rectangle and must not shift.
+            var cmd = GumpDrawCommand.CreateSprite(
+                texture: null,
+                source: new Rectangle(100, 200, 50, 60),
+                dest: new Rectangle(10, 20, 50, 60),
+                hueVector: default,
+                layerDepth: 1f
+            );
+
+            var shifted = cmd.WithOffset(5, 7);
+
+            Assert.Equal(new Rectangle(100, 200, 50, 60), shifted.Source);
+            Assert.Equal(new Rectangle(15, 27, 50, 60), shifted.Dest);
+        }
+
+        [Fact]
+        public void WithOffset_ShiftsTextPosition()
+        {
+            var cmd = GumpDrawCommand.CreateText(null, 10, 20, 1f, 1f, 0);
+
+            var shifted = cmd.WithOffset(3, -4);
+
+            Assert.Equal(13, shifted.X);
+            Assert.Equal(16, shifted.Y);
+        }
+
+        [Fact]
+        public void WithOffset_ShiftsClipPushRect()
+        {
+            var cmd = GumpDrawCommand.CreateClipPush(new Rectangle(10, 20, 100, 200));
+
+            var shifted = cmd.WithOffset(5, 6);
+
+            Assert.Equal(new Rectangle(15, 26, 100, 200), shifted.Dest);
+        }
+
+        [Fact]
+        public void WithOffset_ClipPopIsPositionIndependent()
+        {
+            var cmd = GumpDrawCommand.CreateClipPop();
+
+            var shifted = cmd.WithOffset(100, 100);
+
+            Assert.Equal(GumpCommandKind.ClipPop, shifted.Kind);
+            Assert.Equal(default, shifted.Dest);
+        }
+
+        [Fact]
+        public void WithOffset_ZeroDelta_ReturnsSameValues()
+        {
+            var cmd = GumpDrawCommand.CreateText(null, 10, 20, 1f, 1f, 0);
+
+            var same = cmd.WithOffset(0, 0);
+
+            Assert.Equal(cmd.X, same.X);
+            Assert.Equal(cmd.Y, same.Y);
+            Assert.Equal(cmd.Kind, same.Kind);
+        }
+
+        [Fact]
+        public void AppendCommandsTranslated_ShiftsEveryCommand()
+        {
+            // End-to-end of the drag-path replay primitive.
+            var source = new System.Collections.Generic.List<GumpDrawCommand>
+            {
+                GumpDrawCommand.CreateClipPush(new Rectangle(0, 0, 100, 100)),
+                GumpDrawCommand.CreateSprite(
+                    null,
+                    new Rectangle(0, 0, 50, 50),
+                    new Rectangle(10, 20, 50, 50),
+                    default,
+                    1f
+                ),
+                GumpDrawCommand.CreateText(null, 30, 40, 1f, 1f, 0),
+                GumpDrawCommand.CreateClipPop(),
+            };
+
+            var lists = new RenderLists();
+            lists.AppendCommandsTranslated(source, dx: 3, dy: 7);
+
+            Assert.Equal(4, lists.GumpCommandCount);
+
+            Assert.Equal(new Rectangle(3, 7, 100, 100), lists.PeekGumpCommand(0).Dest);  // clip shifted
+            Assert.Equal(new Rectangle(13, 27, 50, 50), lists.PeekGumpCommand(1).Dest);  // sprite dest shifted
+            Assert.Equal(new Rectangle(0, 0, 50, 50), lists.PeekGumpCommand(1).Source);  // source unchanged
+            Assert.Equal(33, lists.PeekGumpCommand(2).X);                                // text x shifted
+            Assert.Equal(47, lists.PeekGumpCommand(2).Y);                                // text y shifted
+            Assert.Equal(GumpCommandKind.ClipPop, lists.PeekGumpCommand(3).Kind);        // pop unchanged
+        }
+
+        [Fact]
+        public void AppendCommandsTranslated_WithNullOrEmpty_IsNoOp()
+        {
+            var lists = new RenderLists();
+
+            lists.AppendCommandsTranslated(null, 1, 1);
+            Assert.Equal(0, lists.GumpCommandCount);
+
+            lists.AppendCommandsTranslated(new System.Collections.Generic.List<GumpDrawCommand>(), 1, 1);
+            Assert.Equal(0, lists.GumpCommandCount);
+        }
+
+        [Fact]
         public void AddGumpNoAtlas_TextPath_NullShortCircuitsWithoutAllocation()
         {
             // Same allocation-budget guard for the typed text overload. With

@@ -233,6 +233,49 @@ namespace ClassicUO.Game.Scenes
             LayerDepth = layerDepth;
             Callback = callback;
         }
+
+        /// <summary>
+        /// Returns a copy of this command with its screen-space position shifted by
+        /// (<paramref name="dx"/>, <paramref name="dy"/>). Used by the gump-level retained
+        /// cache to re-emit stored commands when the owning gump has only been translated
+        /// (e.g. dragged) since the cache was built, without rebuilding the whole tree.
+        /// <para/>
+        /// Text and Sprite kinds shift their destination position; ClipPush shifts its
+        /// scissor rectangle; ClipPop and TextScrolled's scroll-window UV are position-
+        /// independent. Callback commands cannot be translated because their captured
+        /// state is frozen inside the closure — callers must not request a translated
+        /// replay of a buffer that contains Callback entries.
+        /// </summary>
+        public GumpDrawCommand WithOffset(int dx, int dy)
+        {
+            if (dx == 0 && dy == 0)
+            {
+                return this;
+            }
+
+            return Kind switch
+            {
+                GumpCommandKind.Text =>
+                    new GumpDrawCommand(Kind, Text, X + dx, Y + dy, Alpha, Hue, Texture, Source, Dest, HueVector, LayerDepth, Callback),
+
+                GumpCommandKind.TextScrolled =>
+                    // Source carries the scroll sub-window (sx, sy, sw, sh) in its own
+                    // coordinate space; don't shift Source. Only the anchor moves.
+                    new GumpDrawCommand(Kind, Text, X + dx, Y + dy, Alpha, Hue, Texture, Source, Dest, HueVector, LayerDepth, Callback),
+
+                GumpCommandKind.Sprite =>
+                    new GumpDrawCommand(Kind, Text, X, Y, Alpha, Hue, Texture, Source,
+                        new Rectangle(Dest.X + dx, Dest.Y + dy, Dest.Width, Dest.Height),
+                        HueVector, LayerDepth, Callback),
+
+                GumpCommandKind.ClipPush =>
+                    new GumpDrawCommand(Kind, Text, X, Y, Alpha, Hue, Texture, Source,
+                        new Rectangle(Dest.X + dx, Dest.Y + dy, Dest.Width, Dest.Height),
+                        HueVector, LayerDepth, Callback),
+
+                _ => this,   // ClipPop has no position; Callback must not be reached here.
+            };
+        }
     }
 
     /// <summary>
@@ -446,6 +489,32 @@ namespace ClassicUO.Game.Scenes
 
             _gumpCommands.EnsureCapacity(_gumpCommands.Count + source.Count);
             _gumpCommands.AddRange(source);
+        }
+
+        /// <summary>
+        /// Append a pre-built block of commands with each command's position shifted by
+        /// (<paramref name="dx"/>, <paramref name="dy"/>). Used by the gump-level retained
+        /// cache when the owning gump has only been translated (e.g. dragged) since the
+        /// cache was built — lets the gump reuse its cached command stream without
+        /// rebuilding.
+        /// <para/>
+        /// The caller must ensure <paramref name="source"/> contains no
+        /// <see cref="GumpCommandKind.Callback"/> entries: closures hold their own frozen
+        /// position captures that this method can't translate.
+        /// </summary>
+        public void AppendCommandsTranslated(List<GumpDrawCommand> source, int dx, int dy)
+        {
+            if (source == null || source.Count == 0)
+            {
+                return;
+            }
+
+            _gumpCommands.EnsureCapacity(_gumpCommands.Count + source.Count);
+            var span = CollectionsMarshal.AsSpan(source);
+            for (int i = 0; i < span.Length; i++)
+            {
+                _gumpCommands.Add(span[i].WithOffset(dx, dy));
+            }
         }
 
         // ───── Test accessors ─────

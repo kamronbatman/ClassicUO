@@ -154,6 +154,9 @@ namespace ClassicUO.Game.UI.Gumps
         private List<GumpDrawCommand> _renderCache;
         private int _renderVersion;
         private int _lastBuiltRenderVersion = -1;
+        private int _cachedAtX;
+        private int _cachedAtY;
+        private bool _cacheContainsCallback;
 
         /// <summary>
         /// Opt-in flag for the retained-mode command cache. When true, the
@@ -179,6 +182,13 @@ namespace ClassicUO.Game.UI.Gumps
         /// If <see cref="EnableRenderCache"/> is true and the cache is current,
         /// replays the cached command stream without re-walking the control tree.
         /// Otherwise rebuilds the cache by calling <see cref="AddToRenderLists"/>.
+        /// <para/>
+        /// When the gump has only moved since the cache was built (pure translation,
+        /// e.g. drag), the cached commands are replayed with a per-command offset
+        /// applied — no rebuild of the child tree. Gumps whose cache contains any
+        /// <see cref="GumpCommandKind.Callback"/> entries can't use the translation
+        /// fast path because closures hold frozen position captures, so those fall
+        /// through to a full rebuild instead.
         /// </summary>
         internal void EmitCommandsInto(RenderLists target, int gumpX, int gumpY, ref float layerDepth)
         {
@@ -188,28 +198,70 @@ namespace ClassicUO.Game.UI.Gumps
                 return;
             }
 
-            if (_renderCache == null || _renderVersion != _lastBuiltRenderVersion)
-            {
-                // Rebuild: emit directly into target and snapshot the range of
-                // commands we just produced.
-                int startIndex = target.GumpCommandCount;
-                AddToRenderLists(target, gumpX, gumpY, ref layerDepth);
-                int endIndex = target.GumpCommandCount;
+            bool cacheStale = _renderCache == null || _renderVersion != _lastBuiltRenderVersion;
+            bool positionChanged = gumpX != _cachedAtX || gumpY != _cachedAtY;
 
-                _renderCache ??= new List<GumpDrawCommand>(endIndex - startIndex);
-                _renderCache.Clear();
-                for (int i = startIndex; i < endIndex; i++)
+            // A cached gump that only moved can skip the rebuild if and only if none
+            // of its cached commands is a Callback (captured positions inside closures
+            // wouldn't follow the translation).
+            if (!cacheStale && positionChanged && _cacheContainsCallback)
+            {
+                cacheStale = true;
+            }
+
+            if (cacheStale)
+            {
+                RebuildRenderCache(target, gumpX, gumpY, ref layerDepth);
+                return;
+            }
+
+            if (positionChanged)
+            {
+                int dx = gumpX - _cachedAtX;
+                int dy = gumpY - _cachedAtY;
+
+                // Emit the translated commands into the per-frame stream.
+                target.AppendCommandsTranslated(_renderCache, dx, dy);
+
+                // Rebake the cache in-place so subsequent frames can take the
+                // zero-delta direct-replay path instead of re-translating. This
+                // is an O(commands) walk — the same cost we just paid for the
+                // translated append — not a net regression.
+                for (int i = 0; i < _renderCache.Count; i++)
                 {
-                    _renderCache.Add(target.PeekGumpCommand(i));
+                    _renderCache[i] = _renderCache[i].WithOffset(dx, dy);
                 }
+                _cachedAtX = gumpX;
+                _cachedAtY = gumpY;
+                return;
+            }
 
-                _lastBuiltRenderVersion = _renderVersion;
-            }
-            else
+            // Position unchanged and cache fresh: direct replay.
+            target.AppendCommands(_renderCache);
+        }
+
+        private void RebuildRenderCache(RenderLists target, int gumpX, int gumpY, ref float layerDepth)
+        {
+            int startIndex = target.GumpCommandCount;
+            AddToRenderLists(target, gumpX, gumpY, ref layerDepth);
+            int endIndex = target.GumpCommandCount;
+
+            _renderCache ??= new List<GumpDrawCommand>(endIndex - startIndex);
+            _renderCache.Clear();
+            _cacheContainsCallback = false;
+            for (int i = startIndex; i < endIndex; i++)
             {
-                // Cache hit: replay the cached commands into target.
-                target.AppendCommands(_renderCache);
+                var cmd = target.PeekGumpCommand(i);
+                _renderCache.Add(cmd);
+                if (cmd.Kind == GumpCommandKind.Callback)
+                {
+                    _cacheContainsCallback = true;
+                }
             }
+
+            _lastBuiltRenderVersion = _renderVersion;
+            _cachedAtX = gumpX;
+            _cachedAtY = gumpY;
         }
 
         public override void OnButtonClick(int buttonID)
