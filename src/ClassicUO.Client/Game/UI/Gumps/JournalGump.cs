@@ -254,11 +254,30 @@ namespace ClassicUO.Game.UI.Gumps
             base.Update();
 
             WantUpdateSize = true;
-            _journalEntries.Height = Height - (98 + DIFF_Y);
+
+            // Per-frame layout recompute: the journal grows/shrinks with the
+            // resize gem and these children's Y depends on _background.Height.
+            // Both of these go through `ref int` accessors on Control so no
+            // setter hooks NotifyRenderDirty automatically — track the prior
+            // values and invalidate when they change so the retained cache
+            // rebuilds with the new layout.
+            int newJournalHeight = Height - (98 + DIFF_Y);
+            bool layoutChanged = _journalEntries.Height != newJournalHeight;
+            _journalEntries.Height = newJournalHeight;
 
             for (int i = 0; i < _filters_chekboxes.Length; i++)
             {
-                _filters_chekboxes[i].Y = _background.Height - _filters_chekboxes[i].Height - DIFF_Y + 10;
+                int newY = _background.Height - _filters_chekboxes[i].Height - DIFF_Y + 10;
+                if (_filters_chekboxes[i].Y != newY)
+                {
+                    _filters_chekboxes[i].Y = newY;
+                    layoutChanged = true;
+                }
+            }
+
+            if (layoutChanged)
+            {
+                NotifyRenderDirty();
             }
         }
 
@@ -493,8 +512,15 @@ namespace ClassicUO.Game.UI.Gumps
                     return;
                 }
 
-                _scrollBar.X = X + Width - (_scrollBar.Width >> 1) + 5;
-                _scrollBar.Height = Height;
+                int newX = X + Width - (_scrollBar.Width >> 1) + 5;
+                int newHeight = Height;
+                if (_scrollBar.X != newX || _scrollBar.Height != newHeight)
+                {
+                    _scrollBar.X = newX;
+                    _scrollBar.Height = newHeight;
+                    NotifyRenderDirty();
+                }
+
                 CalculateScrollBarMaxValue();
                 _scrollBar.IsVisible = _scrollBar.MaxValue > _scrollBar.MinValue;
             }
