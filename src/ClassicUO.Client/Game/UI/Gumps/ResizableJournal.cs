@@ -168,6 +168,10 @@ namespace ClassicUO.Game.UI.Gumps
             _scrollBarBase.X = Width - SCROLL_BAR_WIDTH - BORDER_WIDTH;
             _scrollBarBase.Y = _journalArea.Y;
             _scrollBarBase.Height = Height - BORDER_WIDTH - TAB_HEIGHT;
+
+            // Child X/Y/Width/Height went through the ref-int accessors so no setter
+            // fired NotifyRenderDirty. Tell the cache explicitly that layout moved.
+            NotifyRenderDirty();
         }
 
         public override void Save(XmlTextWriter writer)
