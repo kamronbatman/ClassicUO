@@ -174,9 +174,19 @@ namespace ClassicUO.Game.UI.Gumps
                 }
 
 
-                _cacheText = sb.ToString();
-
+                string newCache = sb.ToString();
                 sb.Dispose();
+
+                if (newCache != _cacheText)
+                {
+                    _cacheText = newCache;
+                    // The typed StringFont command captures _cacheText by reference.
+                    // When the string changes the cache needs to rebuild with the new
+                    // reference; Width/Height changes below will also notify via the
+                    // Control property setters, so this is belt+braces for frames
+                    // where only the text content shifted.
+                    NotifyRenderDirty();
+                }
 
                 Vector2 size = Fonts.Bold.MeasureString(_cacheText);
 
@@ -193,25 +203,18 @@ namespace ClassicUO.Game.UI.Gumps
             {
                 return false;
             }
-            float layerDepth = layerDepthRef;
 
             Vector3 hueVector = ShaderHueTranslator.GetHueVector(0);
 
-            renderLists.AddGumpNoAtlas(
-                batcher =>
-                {
-                    batcher.DrawString
-                    (
-                        Fonts.Bold,
-                        _cacheText,
-                        x + 10,
-                        y + 10,
-                        hueVector,
-                        layerDepth
-                    );
-                    return true;
-                }
+            renderLists.AddGumpString(
+                Fonts.Bold,
+                _cacheText,
+                x + 10,
+                y + 10,
+                hueVector,
+                layerDepthRef
             );
+
             return true;
         }
 
