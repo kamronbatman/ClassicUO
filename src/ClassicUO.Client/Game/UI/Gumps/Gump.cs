@@ -4,6 +4,7 @@ using ClassicUO.Game.GameObjects;
 using ClassicUO.Game.Managers;
 using ClassicUO.Game.Scenes;
 using ClassicUO.Game.UI.Controls;
+using ClassicUO.Utility.Logging;
 using Microsoft.Xna.Framework;
 using System;
 using System.Collections.Generic;
@@ -158,6 +159,20 @@ namespace ClassicUO.Game.UI.Gumps
         private int _cachedAtY;
         private bool _cacheContainsCallback;
 
+        // Debug-build aid: warn once per gump type when a Callback command sneaks
+        // into a retained cache. That combination is a silent performance
+        // regression — the cache can never fast-path replay because closures
+        // freeze captured positions — so a warning makes new regressions
+        // immediately visible in logs. Three gumps are documented exceptions:
+        // WorldMapGump, MiniMapGump, TextContainerGump.
+        private static readonly HashSet<Type> s_cachedCallbackWarned = new();
+        private static readonly HashSet<Type> s_cachedCallbackAllowed = new()
+        {
+            typeof(WorldMapGump),
+            typeof(MiniMapGump),
+            typeof(TextContainerGump),
+        };
+
         /// <summary>
         /// Global toggle that forces the retained-mode cache on for every Gump
         /// regardless of its per-instance <see cref="EnableRenderCache"/> flag.
@@ -280,6 +295,21 @@ namespace ClassicUO.Game.UI.Gumps
             _lastBuiltRenderVersion = _renderVersion;
             _cachedAtX = gumpX;
             _cachedAtY = gumpY;
+
+#if DEBUG
+            if (_cacheContainsCallback && EnableRenderCache)
+            {
+                var type = GetType();
+                if (!s_cachedCallbackAllowed.Contains(type) && s_cachedCallbackWarned.Add(type))
+                {
+                    Log.Warn(
+                        $"[RenderCache] {type.Name} emits a Callback command with EnableRenderCache=true; " +
+                        "this forces a full rebuild every drag/resize frame. Convert closures to typed commands or " +
+                        "add this type to Gump.s_cachedCallbackAllowed if the Callback is genuinely per-frame data."
+                    );
+                }
+            }
+#endif
         }
 
         public override void OnButtonClick(int buttonID)
