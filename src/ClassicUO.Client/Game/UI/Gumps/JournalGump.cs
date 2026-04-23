@@ -361,16 +361,21 @@ namespace ClassicUO.Game.UI.Gumps
                 float layerDepth = layerDepthRef;
 
                 int mx = x;
-                int my = y;
-
-                int height = 0;
-                int maxheight = _scrollBar.Value + _scrollBar.Height;
-
 
                 renderLists.AddGumpNoAtlas
                 (
                     batcher =>
                     {
+                        // `height`, `my`, and `maxheight` MUST live inside the closure.
+                        // `height` and `my` are mutated by the loop below, and when the
+                        // retained-mode cache replays this callback they'd accumulate
+                        // across frames if declared outside — collapsing to a blank
+                        // journal after the first render. `maxheight` reads a live field
+                        // so move it too for clarity.
+                        int height = 0;
+                        int my = y;
+                        int maxheight = _scrollBar.Value + _scrollBar.Height;
+
                         for (int i = 0; i < _entries.Count; i++)
                         {
                             RenderedText t = _entries[i];

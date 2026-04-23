@@ -328,13 +328,19 @@ namespace ClassicUO.Game.UI.Gumps
             {
                 base.AddToRenderLists(renderLists, x, y, ref layerDepthRef);
                 float layerDepth = layerDepthRef;
-                int my = y;
 
                 renderLists.AddGumpNoAtlas(
                     batcher =>
                     {
                         if (batcher.ClipBegin(x, y, Width, Height))
                         {
+                            // `my` MUST be declared inside the closure — a closure-local
+                            // local would accumulate between cache-hit replays (it is
+                            // mutated inside the loop below), leaving subsequent frames
+                            // with a y-offset well past the scroll bounds so everything
+                            // fails the visibility check and the journal renders blank.
+                            int my = y;
+
                             RenderLists childRenderLists = new();
                             foreach (JournalData journalEntry in journalDatas)
                             {
@@ -346,8 +352,9 @@ namespace ClassicUO.Game.UI.Gumps
 
                                 if (my + journalEntry.EntryText.Height - y >= _scrollBar.Value && my - y <= _scrollBar.Value + _scrollBar.Height)
                                 {
-                                    journalEntry.TimeStamp.AddToRenderLists(childRenderLists, x, my - _scrollBar.Value, ref layerDepth);
-                                    journalEntry.EntryText.AddToRenderLists(childRenderLists, x + (journalEntry.TimeStamp.Width + 5), my - _scrollBar.Value, ref layerDepth);
+                                    var depth = layerDepth;
+                                    journalEntry.TimeStamp.AddToRenderLists(childRenderLists, x, my - _scrollBar.Value, ref depth);
+                                    journalEntry.EntryText.AddToRenderLists(childRenderLists, x + (journalEntry.TimeStamp.Width + 5), my - _scrollBar.Value, ref depth);
                                 }
                                 my += journalEntry.EntryText.Height;
                             }

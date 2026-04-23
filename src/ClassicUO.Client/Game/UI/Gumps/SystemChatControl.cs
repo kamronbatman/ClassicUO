@@ -430,6 +430,11 @@ namespace ClassicUO.Game.UI.Gumps
             }
 
             _textEntries.AddLast(new ChatLineTime(text, font, isunicode, hue));
+
+            // The render path emits a Callback that captures _textEntries.Last —
+            // when the list grows or an old entry is evicted the captured snapshot
+            // is stale, so tell the owning gump's cache to rebuild next frame.
+            NotifyRenderDirty();
         }
 
         internal void Resize()
@@ -462,6 +467,7 @@ namespace ClassicUO.Game.UI.Gumps
         public override void Update()
         {
             LinkedListNode<ChatLineTime> first = _textEntries.First;
+            bool mutated = false;
 
             while (first != null)
             {
@@ -472,9 +478,18 @@ namespace ClassicUO.Game.UI.Gumps
                 if (first.Value.IsDisposed)
                 {
                     _textEntries.Remove(first);
+                    mutated = true;
                 }
 
                 first = next;
+            }
+
+            if (mutated)
+            {
+                // Entries fading out over time also change what the render
+                // callback iterates; invalidate the owning gump's render cache
+                // (see AddLine comment).
+                NotifyRenderDirty();
             }
 
             if (Mode == ChatMode.Default && IsActive)
@@ -563,15 +578,19 @@ namespace ClassicUO.Game.UI.Gumps
 
         public override bool AddToRenderLists(RenderLists renderLists, int x, int y, ref float layerDepthRef)
         {
-            int yy = TextBoxControl.Y + y - 20;
             var scale = 1f;
-
-            LinkedListNode<ChatLineTime> last = _textEntries.Last;
-
             var depth = layerDepthRef;
 
             renderLists.AddGumpNoAtlas(batcher =>
             {
+                // `yy` and `last` MUST be declared inside the closure. They were
+                // local captures before; the closure mutated both inside its loop,
+                // so every cache-hit replay would start where the previous run
+                // left off instead of at the current list tail — causing
+                // messages to disappear once the render cache was enabled.
+                int yy = TextBoxControl.Y + y - 20;
+                LinkedListNode<ChatLineTime> last = _textEntries.Last;
+
                 while (last != null)
                 {
                     LinkedListNode<ChatLineTime> prev = last.Previous;
