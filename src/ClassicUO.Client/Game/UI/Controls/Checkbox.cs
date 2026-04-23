@@ -111,6 +111,11 @@ namespace ClassicUO.Game.UI.Controls
 
         protected virtual void OnCheckedChanged()
         {
+            // The check state selects between _active and _inactive graphics in
+            // AddToRenderLists; without this notify, the owning gump's retained
+            // render cache keeps replaying the old sprite until some other path
+            // (drag, resize, etc.) bumps the version.
+            NotifyRenderDirty();
             ValueChanged.Raise(this);
         }
 

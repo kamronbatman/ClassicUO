@@ -569,6 +569,11 @@ namespace ClassicUO.Game.UI.Controls
             int y = position.Y - Y - ParentY;
             OnMouseDown(x, y, button);
             MouseDown.Raise(new MouseEventArgs(x, y, button, ButtonState.Pressed), this);
+            // Controls that render a "pressed" state (Button, NiceButton, checkboxes
+            // whose click flips IsChecked in OnMouseUp, etc.) need the cache to
+            // rebuild after the state change. Invalidating unconditionally is cheap
+            // and keeps opt-in simple — any interactive control just works.
+            NotifyRenderDirty();
         }
 
         public void InvokeMouseUp(Point position, MouseButtonType button)
@@ -577,6 +582,7 @@ namespace ClassicUO.Game.UI.Controls
             int y = position.Y - Y - ParentY;
             OnMouseUp(x, y, button);
             MouseUp.Raise(new MouseEventArgs(x, y, button), this);
+            NotifyRenderDirty();
         }
 
         public void InvokeMouseCloseGumpWithRClick()
@@ -601,6 +607,11 @@ namespace ClassicUO.Game.UI.Controls
             int y = position.Y - Y - ParentY;
             OnMouseEnter(x, y);
             MouseEnter.Raise(new MouseEventArgs(x, y), this);
+            // Many controls render differently on hover (HitBox highlight, Button
+            // _entered sprite, HoveredLabel, etc.). Invalidate the owning gump's
+            // cache so the next frame rebuilds with the new hover state instead of
+            // replaying the non-hover snapshot.
+            NotifyRenderDirty();
         }
 
         public void InvokeMouseExit(Point position)
@@ -609,6 +620,7 @@ namespace ClassicUO.Game.UI.Controls
             int y = position.Y - Y - ParentY;
             OnMouseExit(x, y);
             MouseExit.Raise(new MouseEventArgs(x, y), this);
+            NotifyRenderDirty();
         }
 
         public bool InvokeMouseDoubleClick(Point position, MouseButtonType button)
@@ -627,6 +639,9 @@ namespace ClassicUO.Game.UI.Controls
         public void InvokeTextInput(string c)
         {
             OnTextInput(c);
+            // Typing into a text box changes what the control renders. Invalidate
+            // so the cache rebuilds with the new text / caret position next frame.
+            NotifyRenderDirty();
         }
 
         public void InvokeKeyDown(SDL.SDL_Keycode key, SDL.SDL_Keymod mod)
@@ -634,6 +649,9 @@ namespace ClassicUO.Game.UI.Controls
             OnKeyDown(key, mod);
             KeyboardEventArgs arg = new KeyboardEventArgs(key, mod, KeyboardEventType.Down);
             KeyDown?.Raise(arg);
+            // Editing keys (Backspace, Delete, arrows for selection, etc.) also
+            // change render state even when they don't insert a character.
+            NotifyRenderDirty();
         }
 
         public void InvokeKeyUp(SDL.SDL_Keycode key, SDL.SDL_Keymod mod)
@@ -647,6 +665,9 @@ namespace ClassicUO.Game.UI.Controls
         {
             OnMouseWheel(delta);
             MouseWheel.Raise(new MouseWheelEventArgs(delta), this);
+            // Scroll changes what the control shows (scroll bar position, clipped
+            // region contents).
+            NotifyRenderDirty();
         }
 
         public void InvokeDragBegin(Point position)
