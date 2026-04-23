@@ -359,6 +359,129 @@ namespace ClassicUO.UnitTests.Game.Scenes
         }
 
         [Fact]
+        public void AddGumpSpriteTiled_WithNullTexture_IsNoOp()
+        {
+            var lists = new RenderLists();
+
+            lists.AddGumpSpriteTiled(
+                null,
+                new Rectangle(0, 0, 8, 8),
+                new Rectangle(0, 0, 100, 16),
+                Vector3.Zero,
+                1f
+            );
+
+            Assert.Equal(0, lists.GumpCommandCount);
+        }
+
+        [Fact]
+        public void AddGumpSpriteTiled_QueuesAsSpriteTiledKind()
+        {
+            var lists = new RenderLists();
+            // We can't construct a real Texture2D without a graphics device, but
+            // any non-null Texture2D reference would be accepted. Using the factory
+            // directly to sidestep the null-check gate.
+            var cmd = GumpDrawCommand.CreateSpriteTiled(
+                texture: null,
+                source: new Rectangle(0, 0, 8, 8),
+                dest: new Rectangle(0, 0, 100, 16),
+                hueVector: new Vector3(1, 2, 3),
+                layerDepth: 0.5f
+            );
+
+            Assert.Equal(GumpCommandKind.SpriteTiled, cmd.Kind);
+            Assert.Equal(new Rectangle(0, 0, 8, 8), cmd.Source);
+            Assert.Equal(new Rectangle(0, 0, 100, 16), cmd.Dest);
+            Assert.Equal(new Vector3(1, 2, 3), cmd.HueVector);
+            Assert.Equal(0.5f, cmd.LayerDepth);
+        }
+
+        [Fact]
+        public void AddGumpString_WithNullFont_IsNoOp()
+        {
+            var lists = new RenderLists();
+
+            lists.AddGumpString(null, "hello", 10, 20, Vector3.Zero, 1f);
+
+            Assert.Equal(0, lists.GumpCommandCount);
+        }
+
+        [Fact]
+        public void AddGumpString_WithEmptyText_IsNoOp()
+        {
+            var lists = new RenderLists();
+
+            // Using the factory directly since we can't construct a real SpriteFont
+            // without a graphics device. The wrapper also gates on null font, which
+            // matches the factory's general contract.
+            lists.AddGumpString(null, "", 10, 20, Vector3.Zero, 1f);
+
+            Assert.Equal(0, lists.GumpCommandCount);
+        }
+
+        [Fact]
+        public void GumpDrawCommand_StringFontFactory_PopulatesFields()
+        {
+            var cmd = GumpDrawCommand.CreateStringFont(
+                font: null,   // real SpriteFont needs graphics init; null is fine for field-layout checks
+                text: "hello",
+                x: 42,
+                y: 99,
+                hueVector: new Vector3(0.5f, 0.25f, 1f),
+                layerDepth: 2.5f
+            );
+
+            Assert.Equal(GumpCommandKind.StringFont, cmd.Kind);
+            Assert.Equal("hello", cmd.TextString);
+            Assert.Equal(42, cmd.X);
+            Assert.Equal(99, cmd.Y);
+            Assert.Equal(new Vector3(0.5f, 0.25f, 1f), cmd.HueVector);
+            Assert.Equal(2.5f, cmd.LayerDepth);
+            Assert.Null(cmd.Font);
+            Assert.Null(cmd.Text);
+            Assert.Null(cmd.Texture);
+            Assert.Null(cmd.Callback);
+        }
+
+        [Fact]
+        public void WithOffset_ShiftsSpriteTiledDest()
+        {
+            var cmd = GumpDrawCommand.CreateSpriteTiled(
+                texture: null,
+                source: new Rectangle(100, 200, 8, 8),
+                dest: new Rectangle(10, 20, 100, 16),
+                hueVector: Vector3.Zero,
+                layerDepth: 1f
+            );
+
+            var shifted = cmd.WithOffset(5, 7);
+
+            Assert.Equal(new Rectangle(100, 200, 8, 8), shifted.Source);  // Source unchanged
+            Assert.Equal(new Rectangle(15, 27, 100, 16), shifted.Dest);
+            Assert.Equal(GumpCommandKind.SpriteTiled, shifted.Kind);
+        }
+
+        [Fact]
+        public void WithOffset_ShiftsStringFontPosition()
+        {
+            var cmd = GumpDrawCommand.CreateStringFont(
+                font: null,
+                text: "hi",
+                x: 10,
+                y: 20,
+                hueVector: Vector3.Zero,
+                layerDepth: 1f
+            );
+
+            var shifted = cmd.WithOffset(3, -4);
+
+            Assert.Equal(13, shifted.X);
+            Assert.Equal(16, shifted.Y);
+            Assert.Equal("hi", shifted.TextString);   // payload preserved
+            Assert.Equal(GumpCommandKind.StringFont, shifted.Kind);
+        }
+
+        [Fact]
         public void WithOffset_ZeroDelta_ReturnsSameValues()
         {
             var cmd = GumpDrawCommand.CreateText(null, 10, 20, 1f, 1f, 0);

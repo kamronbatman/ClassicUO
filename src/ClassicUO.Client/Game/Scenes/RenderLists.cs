@@ -9,6 +9,12 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 
+// Disambiguate: ClassicUO ships its own SpriteFont in ClassicUO.Renderer
+// alongside MonoGame's Microsoft.Xna.Framework.Graphics.SpriteFont. The
+// UltimaBatcher2D.DrawString overloads take the ClassicUO one (see Fonts.cs),
+// so that's what StringFont commands store.
+using SpriteFont = ClassicUO.Renderer.SpriteFont;
+
 namespace ClassicUO.Game.Scenes
 {
     /// <summary>
@@ -30,6 +36,23 @@ namespace ClassicUO.Game.Scenes
 
         /// <summary>Typed sprite draw: renders a texture sub-rect (Source) into a screen rect (Dest).</summary>
         Sprite,
+
+        /// <summary>
+        /// Typed tiled sprite draw: renders a texture sub-rect repeated across a destination
+        /// rect via <see cref="UltimaBatcher2D.DrawTiled"/>. Same fields as <see cref="Sprite"/>.
+        /// Used by ResizePic centre strips, GumpPicTiled, GumpPicWithWidth, HSliderBar,
+        /// ScrollBar middle segment.
+        /// </summary>
+        SpriteTiled,
+
+        /// <summary>
+        /// Typed <see cref="SpriteFont"/> string draw (not to be confused with
+        /// <see cref="RenderedText"/>). Stores the font reference in <see cref="GumpDrawCommand.Font"/>,
+        /// the text body in <see cref="GumpDrawCommand.TextString"/>, and the position in
+        /// (X, Y). Used by DebugGump, NetworkStatsGump, and other HUD overlays that render
+        /// via MonoGame's SpriteFont atlas.
+        /// </summary>
+        StringFont,
 
         /// <summary>Push a scissor rectangle (Dest) onto the clip stack. Flushes the current batch first.</summary>
         ClipPush,
@@ -74,6 +97,10 @@ namespace ClassicUO.Game.Scenes
         public readonly Rectangle Dest;
         public readonly Vector3 HueVector;
 
+        // StringFont payload.
+        public readonly SpriteFont Font;
+        public readonly string TextString;
+
         // Common.
         public readonly float LayerDepth;
 
@@ -94,6 +121,8 @@ namespace ClassicUO.Game.Scenes
                 source: default,
                 dest: default,
                 hueVector: default,
+                font: null,
+                textString: null,
                 layerDepth: layerDepth,
                 callback: null
             );
@@ -113,6 +142,54 @@ namespace ClassicUO.Game.Scenes
                 source: source,
                 dest: dest,
                 hueVector: hueVector,
+                font: null,
+                textString: null,
+                layerDepth: layerDepth,
+                callback: null
+            );
+        }
+
+        /// <summary>Factory: tiled-sprite command (<see cref="UltimaBatcher2D.DrawTiled"/>).</summary>
+        public static GumpDrawCommand CreateSpriteTiled(Texture2D texture, Rectangle source, Rectangle dest, Vector3 hueVector, float layerDepth)
+        {
+            return new GumpDrawCommand(
+                kind: GumpCommandKind.SpriteTiled,
+                text: null,
+                x: 0,
+                y: 0,
+                alpha: 0f,
+                hue: 0,
+                texture: texture,
+                source: source,
+                dest: dest,
+                hueVector: hueVector,
+                font: null,
+                textString: null,
+                layerDepth: layerDepth,
+                callback: null
+            );
+        }
+
+        /// <summary>
+        /// Factory: typed <see cref="SpriteFont"/> string draw. The text body is stored by
+        /// reference (assumed immutable for the lifetime of the cached command; callers that
+        /// recompute their string every frame should bump the render version accordingly).
+        /// </summary>
+        public static GumpDrawCommand CreateStringFont(SpriteFont font, string text, int x, int y, Vector3 hueVector, float layerDepth)
+        {
+            return new GumpDrawCommand(
+                kind: GumpCommandKind.StringFont,
+                text: null,
+                x: x,
+                y: y,
+                alpha: 0f,
+                hue: 0,
+                texture: null,
+                source: default,
+                dest: default,
+                hueVector: hueVector,
+                font: font,
+                textString: text,
                 layerDepth: layerDepth,
                 callback: null
             );
@@ -143,6 +220,8 @@ namespace ClassicUO.Game.Scenes
                 source: scrollWindow,
                 dest: default,
                 hueVector: default,
+                font: null,
+                textString: null,
                 layerDepth: layerDepth,
                 callback: null
             );
@@ -162,6 +241,8 @@ namespace ClassicUO.Game.Scenes
                 source: default,
                 dest: rect,
                 hueVector: default,
+                font: null,
+                textString: null,
                 layerDepth: 0f,
                 callback: null
             );
@@ -181,6 +262,8 @@ namespace ClassicUO.Game.Scenes
                 source: default,
                 dest: default,
                 hueVector: default,
+                font: null,
+                textString: null,
                 layerDepth: 0f,
                 callback: null
             );
@@ -200,6 +283,8 @@ namespace ClassicUO.Game.Scenes
                 source: default,
                 dest: default,
                 hueVector: default,
+                font: null,
+                textString: null,
                 layerDepth: 0f,
                 callback: callback
             );
@@ -216,6 +301,8 @@ namespace ClassicUO.Game.Scenes
             Rectangle source,
             Rectangle dest,
             Vector3 hueVector,
+            SpriteFont font,
+            string textString,
             float layerDepth,
             Func<UltimaBatcher2D, bool> callback
         )
@@ -230,6 +317,8 @@ namespace ClassicUO.Game.Scenes
             Source = source;
             Dest = dest;
             HueVector = hueVector;
+            Font = font;
+            TextString = textString;
             LayerDepth = layerDepth;
             Callback = callback;
         }
@@ -256,22 +345,33 @@ namespace ClassicUO.Game.Scenes
             return Kind switch
             {
                 GumpCommandKind.Text =>
-                    new GumpDrawCommand(Kind, Text, X + dx, Y + dy, Alpha, Hue, Texture, Source, Dest, HueVector, LayerDepth, Callback),
+                    new GumpDrawCommand(Kind, Text, X + dx, Y + dy, Alpha, Hue, Texture, Source, Dest, HueVector,
+                        Font, TextString, LayerDepth, Callback),
 
                 GumpCommandKind.TextScrolled =>
                     // Source carries the scroll sub-window (sx, sy, sw, sh) in its own
                     // coordinate space; don't shift Source. Only the anchor moves.
-                    new GumpDrawCommand(Kind, Text, X + dx, Y + dy, Alpha, Hue, Texture, Source, Dest, HueVector, LayerDepth, Callback),
+                    new GumpDrawCommand(Kind, Text, X + dx, Y + dy, Alpha, Hue, Texture, Source, Dest, HueVector,
+                        Font, TextString, LayerDepth, Callback),
 
                 GumpCommandKind.Sprite =>
                     new GumpDrawCommand(Kind, Text, X, Y, Alpha, Hue, Texture, Source,
                         new Rectangle(Dest.X + dx, Dest.Y + dy, Dest.Width, Dest.Height),
-                        HueVector, LayerDepth, Callback),
+                        HueVector, Font, TextString, LayerDepth, Callback),
+
+                GumpCommandKind.SpriteTiled =>
+                    new GumpDrawCommand(Kind, Text, X, Y, Alpha, Hue, Texture, Source,
+                        new Rectangle(Dest.X + dx, Dest.Y + dy, Dest.Width, Dest.Height),
+                        HueVector, Font, TextString, LayerDepth, Callback),
+
+                GumpCommandKind.StringFont =>
+                    new GumpDrawCommand(Kind, Text, X + dx, Y + dy, Alpha, Hue, Texture, Source, Dest, HueVector,
+                        Font, TextString, LayerDepth, Callback),
 
                 GumpCommandKind.ClipPush =>
                     new GumpDrawCommand(Kind, Text, X, Y, Alpha, Hue, Texture, Source,
                         new Rectangle(Dest.X + dx, Dest.Y + dy, Dest.Width, Dest.Height),
-                        HueVector, LayerDepth, Callback),
+                        HueVector, Font, TextString, LayerDepth, Callback),
 
                 _ => this,   // ClipPop has no position; Callback must not be reached here.
             };
@@ -412,6 +512,43 @@ namespace ClassicUO.Game.Scenes
                 hueVector,
                 layerDepth
             ));
+        }
+
+        /// <summary>
+        /// Queue a typed tiled sprite draw — the flush path calls
+        /// <see cref="UltimaBatcher2D.DrawTiled"/>, which expands one command into multiple
+        /// batcher quads internally to tile the source rectangle across the destination.
+        /// Used by 9-slice borders, tiled backgrounds, and slider tracks.
+        /// </summary>
+        public void AddGumpSpriteTiled(Texture2D texture, Rectangle source, Rectangle dest, Vector3 hueVector, float layerDepth)
+        {
+            if (texture == null)
+            {
+                return;
+            }
+
+            _gumpCommands.Add(GumpDrawCommand.CreateSpriteTiled(texture, source, dest, hueVector, layerDepth));
+        }
+
+        /// <summary>
+        /// Queue a typed <see cref="SpriteFont"/> string draw. Distinct from
+        /// <see cref="AddGumpNoAtlas(RenderedText, int, int, float, float, ushort)"/>: that
+        /// renders a pre-laid-out <see cref="RenderedText"/> via the font glyph atlas; this
+        /// renders a raw string via MonoGame's SpriteFont path. Used by HUD overlays
+        /// (DebugGump, NetworkStatsGump, etc.).
+        /// <para/>
+        /// The text reference is captured as-is. Callers that mutate the string's contents
+        /// between frames (most HUDs update every ~100 ms) should bump their gump's render
+        /// version so the cache rebuilds with the new text.
+        /// </summary>
+        public void AddGumpString(SpriteFont font, string text, int x, int y, Vector3 hueVector, float layerDepth)
+        {
+            if (font == null || string.IsNullOrEmpty(text))
+            {
+                return;
+            }
+
+            _gumpCommands.Add(GumpDrawCommand.CreateStringFont(font, text, x, y, hueVector, layerDepth));
         }
 
         /// <summary>
@@ -704,6 +841,28 @@ namespace ClassicUO.Game.Scenes
                         if (cmd.Texture != null && !cmd.Texture.IsDisposed)
                         {
                             batcher.Draw(cmd.Texture, cmd.Dest, cmd.Source, cmd.HueVector, cmd.LayerDepth);
+                            done++;
+                        }
+                        break;
+                    }
+
+                    case GumpCommandKind.SpriteTiled:
+                    {
+                        GumpRenderMetrics.SpriteCommands++;
+                        if (cmd.Texture != null && !cmd.Texture.IsDisposed)
+                        {
+                            batcher.DrawTiled(cmd.Texture, cmd.Dest, cmd.Source, cmd.HueVector, cmd.LayerDepth);
+                            done++;
+                        }
+                        break;
+                    }
+
+                    case GumpCommandKind.StringFont:
+                    {
+                        GumpRenderMetrics.TextCommands++;
+                        if (cmd.Font != null && !string.IsNullOrEmpty(cmd.TextString))
+                        {
+                            batcher.DrawString(cmd.Font, cmd.TextString, cmd.X, cmd.Y, cmd.HueVector, cmd.LayerDepth);
                             done++;
                         }
                         break;
