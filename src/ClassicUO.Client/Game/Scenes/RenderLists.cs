@@ -3,6 +3,8 @@ using ClassicUO.Game;
 using ClassicUO.Game.GameObjects;
 using ClassicUO.Game.Map;
 using ClassicUO.Renderer;
+using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Graphics;
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
@@ -10,44 +12,187 @@ using System.Runtime.InteropServices;
 namespace ClassicUO.Game.Scenes
 {
     /// <summary>
-    /// A queued draw into the non-atlas gump layer. Prefer the typed text path:
-    /// store a reference to the <see cref="RenderedText"/> plus its draw parameters.
-    /// This avoids allocating a closure per frame and makes it safe to skip entries
-    /// whose text was destroyed/recycled (pooled via <see cref="RenderedText"/>'s
-    /// internal pool) between queue and flush.
-    ///
-    /// Callers that need an arbitrary non-text draw (clipping, compound operations,
-    /// solid color rectangles, etc.) use the <see cref="Callback"/> path.
+    /// Discriminator for <see cref="GumpDrawCommand"/> entries in the gump
+    /// command stream. Each kind drives a different branch of the flush loop.
     /// </summary>
-    internal readonly struct NoAtlasGumpCommand
+    internal enum GumpCommandKind : byte
     {
+        /// <summary>Typed text draw: renders a <see cref="RenderedText"/> at (X, Y).</summary>
+        Text,
+
+        /// <summary>Typed sprite draw: renders a texture sub-rect (Source) into a screen rect (Dest).</summary>
+        Sprite,
+
+        /// <summary>Push a scissor rectangle (Dest) onto the clip stack. Flushes the current batch first.</summary>
+        ClipPush,
+
+        /// <summary>Pop the most recent scissor rectangle. Flushes the current batch first.</summary>
+        ClipPop,
+
+        /// <summary>Arbitrary <see cref="Func{UltimaBatcher2D, Boolean}"/> fallback. Preserved for callers
+        /// that haven't been migrated to typed kinds yet; allocates a closure at enqueue time.</summary>
+        Callback,
+    }
+
+    /// <summary>
+    /// A single entry in a <see cref="RenderLists"/> gump command stream. Structs are kept in
+    /// insertion order and flushed in order; adjacent Sprite entries that share a texture and
+    /// clip state are batched into the same GPU draw call.
+    /// <para/>
+    /// Fields are split by <see cref="Kind"/>:
+    /// <list type="bullet">
+    /// <item>Text: <see cref="Text"/>, <see cref="X"/>, <see cref="Y"/>, <see cref="Alpha"/>, <see cref="Hue"/>, <see cref="LayerDepth"/>.</item>
+    /// <item>Sprite: <see cref="Texture"/>, <see cref="Source"/>, <see cref="Dest"/>, <see cref="HueVector"/>, <see cref="LayerDepth"/>.</item>
+    /// <item>ClipPush: <see cref="Dest"/> (the scissor rectangle).</item>
+    /// <item>ClipPop: no payload.</item>
+    /// <item>Callback: <see cref="Callback"/>.</item>
+    /// </list>
+    /// Use the factory constructors rather than populating the struct manually.
+    /// </summary>
+    internal readonly struct GumpDrawCommand
+    {
+        public readonly GumpCommandKind Kind;
+
+        // Text payload (also stores X/Y and Alpha/Hue for text rendering).
         public readonly RenderedText Text;
         public readonly int X;
         public readonly int Y;
-        public readonly float LayerDepth;
         public readonly float Alpha;
         public readonly ushort Hue;
+
+        // Sprite payload (Dest also stores the clip rect for ClipPush).
+        public readonly Texture2D Texture;
+        public readonly Rectangle Source;
+        public readonly Rectangle Dest;
+        public readonly Vector3 HueVector;
+
+        // Common.
+        public readonly float LayerDepth;
+
+        // Callback fallback payload.
         public readonly Func<UltimaBatcher2D, bool> Callback;
 
-        public NoAtlasGumpCommand(RenderedText text, int x, int y, float layerDepth, float alpha, ushort hue)
+        /// <summary>Factory: typed text command.</summary>
+        public static GumpDrawCommand CreateText(RenderedText text, int x, int y, float layerDepth, float alpha, ushort hue)
         {
+            return new GumpDrawCommand(
+                kind: GumpCommandKind.Text,
+                text: text,
+                x: x,
+                y: y,
+                alpha: alpha,
+                hue: hue,
+                texture: null,
+                source: default,
+                dest: default,
+                hueVector: default,
+                layerDepth: layerDepth,
+                callback: null
+            );
+        }
+
+        /// <summary>Factory: typed sprite command.</summary>
+        public static GumpDrawCommand CreateSprite(Texture2D texture, Rectangle source, Rectangle dest, Vector3 hueVector, float layerDepth)
+        {
+            return new GumpDrawCommand(
+                kind: GumpCommandKind.Sprite,
+                text: null,
+                x: 0,
+                y: 0,
+                alpha: 0f,
+                hue: 0,
+                texture: texture,
+                source: source,
+                dest: dest,
+                hueVector: hueVector,
+                layerDepth: layerDepth,
+                callback: null
+            );
+        }
+
+        /// <summary>Factory: push a scissor rectangle.</summary>
+        public static GumpDrawCommand CreateClipPush(Rectangle rect)
+        {
+            return new GumpDrawCommand(
+                kind: GumpCommandKind.ClipPush,
+                text: null,
+                x: 0,
+                y: 0,
+                alpha: 0f,
+                hue: 0,
+                texture: null,
+                source: default,
+                dest: rect,
+                hueVector: default,
+                layerDepth: 0f,
+                callback: null
+            );
+        }
+
+        /// <summary>Factory: pop the most recent scissor rectangle.</summary>
+        public static GumpDrawCommand CreateClipPop()
+        {
+            return new GumpDrawCommand(
+                kind: GumpCommandKind.ClipPop,
+                text: null,
+                x: 0,
+                y: 0,
+                alpha: 0f,
+                hue: 0,
+                texture: null,
+                source: default,
+                dest: default,
+                hueVector: default,
+                layerDepth: 0f,
+                callback: null
+            );
+        }
+
+        /// <summary>Factory: arbitrary closure fallback.</summary>
+        public static GumpDrawCommand CreateCallback(Func<UltimaBatcher2D, bool> callback)
+        {
+            return new GumpDrawCommand(
+                kind: GumpCommandKind.Callback,
+                text: null,
+                x: 0,
+                y: 0,
+                alpha: 0f,
+                hue: 0,
+                texture: null,
+                source: default,
+                dest: default,
+                hueVector: default,
+                layerDepth: 0f,
+                callback: callback
+            );
+        }
+
+        private GumpDrawCommand(
+            GumpCommandKind kind,
+            RenderedText text,
+            int x,
+            int y,
+            float alpha,
+            ushort hue,
+            Texture2D texture,
+            Rectangle source,
+            Rectangle dest,
+            Vector3 hueVector,
+            float layerDepth,
+            Func<UltimaBatcher2D, bool> callback
+        )
+        {
+            Kind = kind;
             Text = text;
             X = x;
             Y = y;
-            LayerDepth = layerDepth;
             Alpha = alpha;
             Hue = hue;
-            Callback = null;
-        }
-
-        public NoAtlasGumpCommand(Func<UltimaBatcher2D, bool> callback)
-        {
-            Text = null;
-            X = 0;
-            Y = 0;
-            LayerDepth = 0f;
-            Alpha = 0f;
-            Hue = 0;
+            Texture = texture;
+            Source = source;
+            Dest = dest;
+            HueVector = hueVector;
+            LayerDepth = layerDepth;
             Callback = callback;
         }
     }
@@ -65,8 +210,14 @@ namespace ClassicUO.Game.Scenes
         private readonly List<GameObject> _animations = [];
         private readonly List<GameObject> _effects = [];
         private readonly List<GameObject> _transparentObjects = [];
-        private readonly List<Func<UltimaBatcher2D, bool>> _gumpSprites = [];
-        private readonly List<NoAtlasGumpCommand> _gumpTexts = [];
+
+        /// <summary>
+        /// Unified gump command stream. Replaces the previous split between
+        /// <c>_gumpSprites</c> (atlas closures) and <c>_gumpTexts</c> (text / misc closures).
+        /// Insertion order across sprites, text, and clips is now preserved, and adjacent
+        /// typed commands sharing the same texture batch into a single GPU draw call during flush.
+        /// </summary>
+        private readonly List<GumpDrawCommand> _gumpCommands = [];
 
         public void Clear()
         {
@@ -76,8 +227,7 @@ namespace ClassicUO.Game.Scenes
             _animations.Clear();
             _effects.Clear();
             _transparentObjects.Clear();
-            _gumpSprites.Clear();
-            _gumpTexts.Clear();
+            _gumpCommands.Clear();
         }
 
         public void Add(GameObject toRender, bool isTransparent = false)
@@ -130,22 +280,41 @@ namespace ClassicUO.Game.Scenes
             }
         }
 
+        // ───── Gump command stream API ─────
+
         /// <summary>
-        /// This is an intermediate, crappy solution. Rewriting gump rendering would be way too much at this point.
-        /// Adding gump elements that use atlas textures for efficient rendering.
+        /// Fallback overload for atlas-based gump sprites that haven't been migrated to the
+        /// typed <see cref="AddGumpSprite"/> path yet. Allocates a closure per enqueue; prefer
+        /// the typed overload in new code.
         /// </summary>
-        /// <param name="toRender"></param>
         public void AddGumpWithAtlas(Func<UltimaBatcher2D, bool> toRender)
         {
-            _gumpSprites.Add(toRender);
+            if (toRender == null)
+            {
+                return;
+            }
+
+            _gumpCommands.Add(GumpDrawCommand.CreateCallback(toRender));
         }
 
         /// <summary>
-        /// Queue a <see cref="RenderedText"/> draw into the non-atlas gump layer.
-        /// This is the preferred path: allocation-free (struct value), insertion-order
-        /// preserved alongside <see cref="AddGumpNoAtlas(Func{UltimaBatcher2D, bool})"/>
-        /// fallback entries, and flushed with a validity guard against destroyed/recycled
-        /// text references.
+        /// Queue a typed sprite draw (texture + source UV + destination rect + hue/alpha vector
+        /// + layer depth). Zero-allocation; the flush path batches adjacent Sprite commands that
+        /// share a texture into a single GPU draw call.
+        /// </summary>
+        public void AddGumpSprite(Texture2D texture, Rectangle source, Rectangle dest, Vector3 hueVector, float layerDepth)
+        {
+            if (texture == null)
+            {
+                return;
+            }
+
+            _gumpCommands.Add(GumpDrawCommand.CreateSprite(texture, source, dest, hueVector, layerDepth));
+        }
+
+        /// <summary>
+        /// Queue a typed <see cref="RenderedText"/> draw. Zero-allocation; the flush path guards
+        /// against destroyed/recycled text via <see cref="RenderedText.HasContent"/>.
         /// </summary>
         public void AddGumpNoAtlas(RenderedText text, int x, int y, float layerDepth, float alpha = 1f, ushort hue = 0)
         {
@@ -154,14 +323,13 @@ namespace ClassicUO.Game.Scenes
                 return;
             }
 
-            _gumpTexts.Add(new NoAtlasGumpCommand(text, x, y, layerDepth, alpha, hue));
+            _gumpCommands.Add(GumpDrawCommand.CreateText(text, x, y, layerDepth, alpha, hue));
         }
 
         /// <summary>
-        /// Fallback: queue an arbitrary draw closure into the non-atlas gump layer.
-        /// Use this for compound operations (clipping, nested render lists, solid-color
-        /// rectangles) that don't fit the <see cref="RenderedText"/> fast path. New code
-        /// should prefer the typed overload when drawing text.
+        /// Fallback overload for non-sprite non-text callers that haven't been migrated to the
+        /// typed <see cref="PushClip"/>/<see cref="PopClip"/> or <see cref="AddGumpSprite"/>
+        /// paths yet. Allocates a closure per enqueue; prefer the typed overloads in new code.
         /// </summary>
         public void AddGumpNoAtlas(Func<UltimaBatcher2D, bool> toRender)
         {
@@ -170,13 +338,32 @@ namespace ClassicUO.Game.Scenes
                 return;
             }
 
-            _gumpTexts.Add(new NoAtlasGumpCommand(toRender));
+            _gumpCommands.Add(GumpDrawCommand.CreateCallback(toRender));
         }
 
-        // Test accessors. Kept internal; allow unit tests to inspect what was queued
-        // without requiring a live graphics device to invoke the flush path.
-        internal int GumpTextsCount => _gumpTexts.Count;
-        internal NoAtlasGumpCommand PeekGumpText(int index) => _gumpTexts[index];
+        /// <summary>
+        /// Push a scissor rectangle onto the gump clip stack. Subsequent commands render clipped
+        /// to this rectangle until the matching <see cref="PopClip"/>.
+        /// </summary>
+        public void PushClip(Rectangle rect)
+        {
+            _gumpCommands.Add(GumpDrawCommand.CreateClipPush(rect));
+        }
+
+        /// <summary>
+        /// Pop the most recent scissor rectangle pushed via <see cref="PushClip"/>.
+        /// </summary>
+        public void PopClip()
+        {
+            _gumpCommands.Add(GumpDrawCommand.CreateClipPop());
+        }
+
+        // ───── Test accessors ─────
+
+        internal int GumpCommandCount => _gumpCommands.Count;
+        internal GumpDrawCommand PeekGumpCommand(int index) => _gumpCommands[index];
+
+        // ───── Draw pipeline ─────
 
         public int DrawRenderLists(UltimaBatcher2D batcher, sbyte maxGroundZ)
         {
@@ -186,11 +373,10 @@ namespace ClassicUO.Game.Scenes
                    DrawRenderList(batcher, _animations, maxGroundZ) +
                    DrawRenderList(batcher, _effects, maxGroundZ);
 
-            if (_transparentObjects.Count > 0 || _gumpSprites.Count > 0 || _gumpTexts.Count > 0)
+            if (_transparentObjects.Count > 0 || _gumpCommands.Count > 0)
             {
                 result += DrawRenderList(batcher, _transparentObjects, maxGroundZ);
-                result += DrawRenderListWithAtlas(batcher, _gumpSprites);
-                result += DrawRenderListNoAtlas(batcher, _gumpTexts);
+                result += DrawGumpCommands(batcher, _gumpCommands);
             }
 
             return result;
@@ -231,12 +417,11 @@ namespace ClassicUO.Game.Scenes
                    DrawRenderList(batcher, _animations, maxGroundZ) +
                    DrawRenderList(batcher, _effects, maxGroundZ);
 
-            if (_transparentObjects.Count > 0 || _gumpSprites.Count > 0 || _gumpTexts.Count > 0)
+            if (_transparentObjects.Count > 0 || _gumpCommands.Count > 0)
             {
                 //batcher.SetStencil(DepthStencilState.DepthRead);
                 result += DrawRenderList(batcher, _transparentObjects, maxGroundZ);
-                result += DrawRenderListWithAtlas(batcher, _gumpSprites);
-                result += DrawRenderListNoAtlas(batcher, _gumpTexts);
+                result += DrawGumpCommands(batcher, _gumpCommands);
                 //batcher.SetStencil(null);
             }
 
@@ -285,49 +470,90 @@ namespace ClassicUO.Game.Scenes
             return done;
         }
 
-        private static int DrawRenderListWithAtlas(UltimaBatcher2D batcher, List<Func<UltimaBatcher2D, bool>> renderList)
-        {
-            int done = 0;
-
-            foreach (var obj in renderList)
-            {
-                if (obj.Invoke(batcher))
-                {
-                    done++;
-                }
-            }
-
-            return done;
-        }
-
-        private static int DrawRenderListNoAtlas(UltimaBatcher2D batcher, List<NoAtlasGumpCommand> renderList)
+        /// <summary>
+        /// Flush the unified gump command buffer. Walks the commands in insertion order,
+        /// dispatches on <see cref="GumpCommandKind"/>, and relies on the underlying
+        /// <see cref="UltimaBatcher2D"/> to batch adjacent draws that share a texture.
+        /// Clip commands translate into <see cref="UltimaBatcher2D.ClipBegin"/>/
+        /// <see cref="UltimaBatcher2D.ClipEnd"/> calls which implicitly flush the batch.
+        /// </summary>
+        private static int DrawGumpCommands(UltimaBatcher2D batcher, List<GumpDrawCommand> commands)
         {
             int done = 0;
 
             // AsSpan avoids the List<T> enumerator allocation on the hot path.
-            var span = CollectionsMarshal.AsSpan(renderList);
+            var span = CollectionsMarshal.AsSpan(commands);
+
+            // ClipBegin can return false when the requested rectangle is empty or
+            // its intersection with the parent scissor is empty; in that case the
+            // underlying ScissorStack is NOT pushed. The matching ClipPop must
+            // therefore skip ClipEnd, otherwise it pops an empty stack and throws.
+            // Track the per-push success in a small inline stack. 32 levels is
+            // far more than any real gump nests.
+            Span<bool> clipPushed = stackalloc bool[32];
+            int clipDepth = 0;
+
             for (int i = 0; i < span.Length; i++)
             {
                 ref readonly var cmd = ref span[i];
 
-                if (cmd.Text != null)
+                switch (cmd.Kind)
                 {
-                    // Typed fast path. HasContent rejects destroyed/empty text, which is
-                    // possible when the underlying instance was returned to the pool
-                    // between queue and flush.
-                    if (!cmd.Text.HasContent)
+                    case GumpCommandKind.Text:
                     {
-                        continue;
+                        // HasContent rejects destroyed/empty text, which can happen when the
+                        // underlying pooled RenderedText was returned to its pool between
+                        // enqueue and flush (see QueuedPool<RenderedText>).
+                        if (cmd.Text != null && cmd.Text.HasContent &&
+                            cmd.Text.Draw(batcher, cmd.X, cmd.Y, cmd.LayerDepth, cmd.Alpha, cmd.Hue))
+                        {
+                            done++;
+                        }
+                        break;
                     }
 
-                    if (cmd.Text.Draw(batcher, cmd.X, cmd.Y, cmd.LayerDepth, cmd.Alpha, cmd.Hue))
+                    case GumpCommandKind.Sprite:
                     {
-                        done++;
+                        if (cmd.Texture != null && !cmd.Texture.IsDisposed)
+                        {
+                            batcher.Draw(cmd.Texture, cmd.Dest, cmd.Source, cmd.HueVector, cmd.LayerDepth);
+                            done++;
+                        }
+                        break;
                     }
-                }
-                else if (cmd.Callback != null && cmd.Callback.Invoke(batcher))
-                {
-                    done++;
+
+                    case GumpCommandKind.ClipPush:
+                    {
+                        bool pushed = batcher.ClipBegin(cmd.Dest.X, cmd.Dest.Y, cmd.Dest.Width, cmd.Dest.Height);
+                        if (clipDepth < clipPushed.Length)
+                        {
+                            clipPushed[clipDepth] = pushed;
+                        }
+                        clipDepth++;
+                        break;
+                    }
+
+                    case GumpCommandKind.ClipPop:
+                    {
+                        if (clipDepth > 0)
+                        {
+                            clipDepth--;
+                            if (clipDepth < clipPushed.Length && clipPushed[clipDepth])
+                            {
+                                batcher.ClipEnd();
+                            }
+                        }
+                        break;
+                    }
+
+                    case GumpCommandKind.Callback:
+                    {
+                        if (cmd.Callback != null && cmd.Callback.Invoke(batcher))
+                        {
+                            done++;
+                        }
+                        break;
+                    }
                 }
             }
 

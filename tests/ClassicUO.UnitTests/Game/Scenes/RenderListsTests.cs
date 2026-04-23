@@ -4,33 +4,38 @@ using System;
 using ClassicUO.Game;
 using ClassicUO.Game.Scenes;
 using ClassicUO.Renderer;
+using Microsoft.Xna.Framework;
 using Xunit;
 
 namespace ClassicUO.UnitTests.Game.Scenes
 {
     /// <summary>
-    /// Regression tests for the non-atlas gump queue (<see cref="RenderLists"/>
-    /// <c>_gumpTexts</c>).
+    /// Tests for the unified gump command stream in <see cref="RenderLists"/>.
     /// <para/>
-    /// Background: the refactor in ClassicUO commit dcd8d3fa8 ("Refactored the
-    /// rendering stack") replaced direct gump-text drawing with a queue of
-    /// <see cref="Func{UltimaBatcher2D, Boolean}"/> closures. Each closure captured
-    /// <c>this._gameText</c> by reference. Because <see cref="RenderedText"/> is
-    /// pooled via an internal <c>QueuedPool</c>, a closure queued in frame N could
-    /// reference a <c>RenderedText</c> that was disposed and recycled into a
-    /// different control's state before the closure ran. That produced the
-    /// intermittent "blank name label" symptom reported on ModernUO's PropsGump.
+    /// Background: the render-stack refactor (commit dcd8d3fa8) introduced a
+    /// closure-based gump draw queue. Closures captured <see cref="RenderedText"/>
+    /// by reference, and because <see cref="RenderedText"/> is pooled via an
+    /// internal <c>QueuedPool</c>, a closure queued in frame N could reference
+    /// an instance that was recycled before the closure ran. This manifested on
+    /// ModernUO's PropsGump as intermittent blank labels.
     /// <para/>
-    /// The fix replaced the closure list with <see cref="NoAtlasGumpCommand"/>
-    /// struct values. Text commands carry the <c>RenderedText</c> reference plus
-    /// its draw parameters; the flush path validates <c>HasContent</c> before
-    /// drawing, so a recycled instance is skipped instead of drawing stale state
-    /// or allocating per frame.
+    /// The queue was rewritten into typed <see cref="GumpDrawCommand"/> struct
+    /// values with a <see cref="GumpCommandKind"/> discriminator:
+    /// <list type="bullet">
+    /// <item><c>Text</c> — <see cref="RenderedText"/> + position + alpha/hue.</item>
+    /// <item><c>Sprite</c> — texture + source UV + dest rect + hue vector.</item>
+    /// <item><c>ClipPush</c>/<c>ClipPop</c> — scissor stack.</item>
+    /// <item><c>Callback</c> — arbitrary closure fallback, kept for not-yet-migrated callers.</item>
+    /// </list>
+    /// The flush path validates <see cref="RenderedText.HasContent"/> before
+    /// drawing, so recycled/destroyed instances skip cleanly instead of rendering
+    /// stale state. Struct commands also eliminate the per-frame closure
+    /// allocation that closures imposed.
     /// <para/>
     /// These tests cover the queue/skip behaviour that is reachable without a
-    /// live <c>GraphicsDevice</c>. The actual text rasterization is not exercised
-    /// here — that path requires <see cref="UltimaBatcher2D"/> and depends on
-    /// MonoGame infrastructure not available in CI.
+    /// live <c>GraphicsDevice</c>. The actual text rasterization / GPU draw is
+    /// not exercised here — that path requires <see cref="UltimaBatcher2D"/> and
+    /// depends on MonoGame infrastructure not available in CI.
     /// </summary>
     public class RenderListsTests
     {
@@ -41,7 +46,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
 
             lists.AddGumpNoAtlas((RenderedText)null, x: 10, y: 20, layerDepth: 1f);
 
-            Assert.Equal(0, lists.GumpTextsCount);
+            Assert.Equal(0, lists.GumpCommandCount);
         }
 
         [Fact]
@@ -51,7 +56,27 @@ namespace ClassicUO.UnitTests.Game.Scenes
 
             lists.AddGumpNoAtlas((Func<UltimaBatcher2D, bool>)null);
 
-            Assert.Equal(0, lists.GumpTextsCount);
+            Assert.Equal(0, lists.GumpCommandCount);
+        }
+
+        [Fact]
+        public void AddGumpWithAtlas_WithNullFunc_IsNoOp()
+        {
+            var lists = new RenderLists();
+
+            lists.AddGumpWithAtlas(null);
+
+            Assert.Equal(0, lists.GumpCommandCount);
+        }
+
+        [Fact]
+        public void AddGumpSprite_WithNullTexture_IsNoOp()
+        {
+            var lists = new RenderLists();
+
+            lists.AddGumpSprite(null, new Rectangle(0, 0, 16, 16), new Rectangle(0, 0, 16, 16), Vector3.Zero, 1f);
+
+            Assert.Equal(0, lists.GumpCommandCount);
         }
 
         [Fact]
@@ -62,52 +87,86 @@ namespace ClassicUO.UnitTests.Game.Scenes
 
             lists.AddGumpNoAtlas(cb);
 
-            Assert.Equal(1, lists.GumpTextsCount);
-            var cmd = lists.PeekGumpText(0);
+            Assert.Equal(1, lists.GumpCommandCount);
+            var cmd = lists.PeekGumpCommand(0);
+            Assert.Equal(GumpCommandKind.Callback, cmd.Kind);
             Assert.Null(cmd.Text);
             Assert.Same(cb, cmd.Callback);
         }
 
         [Fact]
-        public void Clear_EmptiesGumpTexts()
+        public void AddGumpWithAtlas_RoutesIntoUnifiedCommandStream()
         {
+            // The atlas-fallback Func overload must write into the SAME list as
+            // text and sprite commands so insertion order is preserved across
+            // mixed-kind gumps (button background then caption, etc.).
             var lists = new RenderLists();
-            lists.AddGumpNoAtlas(static _ => true);
-            lists.AddGumpNoAtlas(static _ => true);
-            Assert.Equal(2, lists.GumpTextsCount);
+            Func<UltimaBatcher2D, bool> spriteCb = static _ => true;
+            Func<UltimaBatcher2D, bool> textCb = static _ => true;
 
-            lists.Clear();
+            lists.AddGumpWithAtlas(spriteCb);
+            lists.AddGumpNoAtlas(textCb);
 
-            Assert.Equal(0, lists.GumpTextsCount);
+            Assert.Equal(2, lists.GumpCommandCount);
+            Assert.Same(spriteCb, lists.PeekGumpCommand(0).Callback);
+            Assert.Same(textCb, lists.PeekGumpCommand(1).Callback);
         }
 
         [Fact]
-        public void AddGumpNoAtlas_PreservesInsertionOrder()
+        public void Clear_EmptiesAllGumpCommands()
+        {
+            var lists = new RenderLists();
+            lists.AddGumpNoAtlas(static _ => true);
+            lists.AddGumpWithAtlas(static _ => true);
+            lists.PushClip(new Rectangle(0, 0, 100, 100));
+            lists.PopClip();
+            Assert.Equal(4, lists.GumpCommandCount);
+
+            lists.Clear();
+
+            Assert.Equal(0, lists.GumpCommandCount);
+        }
+
+        [Fact]
+        public void CommandStream_PreservesInsertionOrderAcrossKinds()
         {
             var lists = new RenderLists();
             Func<UltimaBatcher2D, bool> first = static _ => true;
             Func<UltimaBatcher2D, bool> second = static _ => false;
-            Func<UltimaBatcher2D, bool> third = static _ => true;
 
-            lists.AddGumpNoAtlas(first);
-            lists.AddGumpNoAtlas(second);
-            lists.AddGumpNoAtlas(third);
+            lists.AddGumpWithAtlas(first);                         // sprite via callback fallback
+            lists.PushClip(new Rectangle(10, 20, 30, 40));
+            lists.AddGumpNoAtlas(second);                          // text via callback fallback
+            lists.PopClip();
 
-            Assert.Equal(3, lists.GumpTextsCount);
-            Assert.Same(first, lists.PeekGumpText(0).Callback);
-            Assert.Same(second, lists.PeekGumpText(1).Callback);
-            Assert.Same(third, lists.PeekGumpText(2).Callback);
+            Assert.Equal(4, lists.GumpCommandCount);
+            Assert.Equal(GumpCommandKind.Callback, lists.PeekGumpCommand(0).Kind);
+            Assert.Same(first, lists.PeekGumpCommand(0).Callback);
+            Assert.Equal(GumpCommandKind.ClipPush, lists.PeekGumpCommand(1).Kind);
+            Assert.Equal(GumpCommandKind.Callback, lists.PeekGumpCommand(2).Kind);
+            Assert.Same(second, lists.PeekGumpCommand(2).Callback);
+            Assert.Equal(GumpCommandKind.ClipPop, lists.PeekGumpCommand(3).Kind);
         }
 
         [Fact]
-        public void NoAtlasGumpCommand_TextConstructor_AssignsAllFields()
+        public void PushClip_StoresRectangleInDest()
         {
-            // RenderedText cannot be constructed here (requires graphics init).
-            // null is a legal Text value for the struct itself; the RenderLists
-            // wrapper is what rejects null inputs. This test checks the struct
-            // stores every parameter faithfully.
-            var cmd = new NoAtlasGumpCommand(
-                text: null,
+            var lists = new RenderLists();
+            var clipRect = new Rectangle(7, 13, 42, 99);
+
+            lists.PushClip(clipRect);
+
+            Assert.Equal(1, lists.GumpCommandCount);
+            var cmd = lists.PeekGumpCommand(0);
+            Assert.Equal(GumpCommandKind.ClipPush, cmd.Kind);
+            Assert.Equal(clipRect, cmd.Dest);
+        }
+
+        [Fact]
+        public void GumpDrawCommand_TextFactory_PopulatesFields()
+        {
+            var cmd = GumpDrawCommand.CreateText(
+                text: null,     // RenderedText needs graphics init; null is acceptable for field-layout test
                 x: 42,
                 y: 99,
                 layerDepth: 3.5f,
@@ -115,29 +174,59 @@ namespace ClassicUO.UnitTests.Game.Scenes
                 hue: 123
             );
 
-            Assert.Null(cmd.Text);
+            Assert.Equal(GumpCommandKind.Text, cmd.Kind);
             Assert.Equal(42, cmd.X);
             Assert.Equal(99, cmd.Y);
             Assert.Equal(3.5f, cmd.LayerDepth);
             Assert.Equal(0.75f, cmd.Alpha);
             Assert.Equal((ushort)123, cmd.Hue);
+            Assert.Null(cmd.Text);
             Assert.Null(cmd.Callback);
+            Assert.Null(cmd.Texture);
         }
 
         [Fact]
-        public void NoAtlasGumpCommand_CallbackConstructor_OnlyStoresCallback()
+        public void GumpDrawCommand_CallbackFactory_OnlyStoresCallback()
         {
             Func<UltimaBatcher2D, bool> cb = static _ => true;
 
-            var cmd = new NoAtlasGumpCommand(cb);
+            var cmd = GumpDrawCommand.CreateCallback(cb);
 
+            Assert.Equal(GumpCommandKind.Callback, cmd.Kind);
             Assert.Null(cmd.Text);
+            Assert.Null(cmd.Texture);
             Assert.Same(cb, cmd.Callback);
             Assert.Equal(0, cmd.X);
             Assert.Equal(0, cmd.Y);
             Assert.Equal(0f, cmd.LayerDepth);
             Assert.Equal(0f, cmd.Alpha);
             Assert.Equal((ushort)0, cmd.Hue);
+        }
+
+        [Fact]
+        public void GumpDrawCommand_ClipPushFactory_StoresRectInDest()
+        {
+            var rect = new Rectangle(1, 2, 3, 4);
+
+            var cmd = GumpDrawCommand.CreateClipPush(rect);
+
+            Assert.Equal(GumpCommandKind.ClipPush, cmd.Kind);
+            Assert.Equal(rect, cmd.Dest);
+            Assert.Null(cmd.Texture);
+            Assert.Null(cmd.Text);
+            Assert.Null(cmd.Callback);
+        }
+
+        [Fact]
+        public void GumpDrawCommand_ClipPopFactory_HasNoPayload()
+        {
+            var cmd = GumpDrawCommand.CreateClipPop();
+
+            Assert.Equal(GumpCommandKind.ClipPop, cmd.Kind);
+            Assert.Equal(default, cmd.Dest);
+            Assert.Null(cmd.Texture);
+            Assert.Null(cmd.Text);
+            Assert.Null(cmd.Callback);
         }
 
         [Fact]
@@ -179,11 +268,11 @@ namespace ClassicUO.UnitTests.Game.Scenes
                 $"AddGumpNoAtlas(Func) allocated {delta} bytes over {measuredCalls} warm calls; expected near zero. " +
                 "A large value here usually means a closure allocation was reintroduced into AddGumpNoAtlas or the caller."
             );
-            Assert.Equal(measuredCalls, lists.GumpTextsCount);
+            Assert.Equal(measuredCalls, lists.GumpCommandCount);
         }
 
         [Fact]
-        public void AddGumpNoAtlas_TextPath_DoesNotAllocatePerCall()
+        public void AddGumpNoAtlas_TextPath_NullShortCircuitsWithoutAllocation()
         {
             // Same allocation-budget guard for the typed text overload. With
             // null text the wrapper short-circuits before the List.Add, so we
@@ -191,7 +280,6 @@ namespace ClassicUO.UnitTests.Game.Scenes
             // construct a real RenderedText here.
             var lists = new RenderLists();
 
-            // Null-path no-op: never touches the list; should allocate nothing.
             var before = GC.GetAllocatedBytesForCurrentThread();
             for (int i = 0; i < 1000; i++)
             {
@@ -203,27 +291,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
                 delta < 1024,
                 $"AddGumpNoAtlas(null text) allocated {delta} bytes; expected zero."
             );
-            Assert.Equal(0, lists.GumpTextsCount);
-        }
-
-        [Fact]
-        public void Mixed_TextAndFunc_PreserveInsertionOrder()
-        {
-            // Ensures the tagged-struct design preserves the original per-frame
-            // insertion order across mixed entries (text + Func fallback).
-            var lists = new RenderLists();
-            Func<UltimaBatcher2D, bool> cb1 = static _ => true;
-            Func<UltimaBatcher2D, bool> cb2 = static _ => false;
-
-            lists.AddGumpNoAtlas(cb1);
-            // AddGumpNoAtlas(null, ...) would be skipped by the null guard; but
-            // we can push a struct directly via the Callback path with a second
-            // distinct delegate to exercise ordering with heterogeneous entries.
-            lists.AddGumpNoAtlas(cb2);
-
-            Assert.Equal(2, lists.GumpTextsCount);
-            Assert.Same(cb1, lists.PeekGumpText(0).Callback);
-            Assert.Same(cb2, lists.PeekGumpText(1).Callback);
+            Assert.Equal(0, lists.GumpCommandCount);
         }
     }
 }
