@@ -65,6 +65,14 @@ namespace ClassicUO.Game.Scenes
         /// </summary>
         StringFont,
 
+        /// <summary>
+        /// Typed line draw (<see cref="UltimaBatcher2D.DrawLine"/>): a rotated 1-px-tall sprite
+        /// spanning two screen points. Source.Location stores the start point and Dest.Location
+        /// stores the end point (both in pixels); Alpha stores the stroke thickness. Used by
+        /// MapGump to connect plotted pins.
+        /// </summary>
+        Line,
+
         /// <summary>Push a scissor rectangle (Dest) onto the clip stack. Flushes the current batch first.</summary>
         ClipPush,
 
@@ -270,6 +278,30 @@ namespace ClassicUO.Game.Scenes
             );
         }
 
+        /// <summary>
+        /// Factory: typed rotated-line command. Start and end are stored as Source.Location
+        /// and Dest.Location respectively; <paramref name="stroke"/> is stored in Alpha.
+        /// </summary>
+        public static GumpDrawCommand CreateLine(Texture2D texture, Vector2 start, Vector2 end, Vector3 hueVector, float stroke, float layerDepth)
+        {
+            return new GumpDrawCommand(
+                kind: GumpCommandKind.Line,
+                text: null,
+                x: 0,
+                y: 0,
+                alpha: stroke,
+                hue: 0,
+                texture: texture,
+                source: new Rectangle((int)start.X, (int)start.Y, 0, 0),
+                dest: new Rectangle((int)end.X, (int)end.Y, 0, 0),
+                hueVector: hueVector,
+                font: null,
+                textString: null,
+                layerDepth: layerDepth,
+                callback: null
+            );
+        }
+
         /// <summary>Factory: push a scissor rectangle.</summary>
         public static GumpDrawCommand CreateClipPush(Rectangle rect)
         {
@@ -420,6 +452,13 @@ namespace ClassicUO.Game.Scenes
 
                 GumpCommandKind.ClipPush =>
                     new GumpDrawCommand(Kind, Text, X, Y, Alpha, Hue, Texture, Source,
+                        new Rectangle(Dest.X + dx, Dest.Y + dy, Dest.Width, Dest.Height),
+                        HueVector, Font, TextString, LayerDepth, Callback),
+
+                GumpCommandKind.Line =>
+                    // Shift both endpoints: Source.Location is the line start, Dest.Location is the end.
+                    new GumpDrawCommand(Kind, Text, X, Y, Alpha, Hue, Texture,
+                        new Rectangle(Source.X + dx, Source.Y + dy, Source.Width, Source.Height),
                         new Rectangle(Dest.X + dx, Dest.Y + dy, Dest.Width, Dest.Height),
                         HueVector, Font, TextString, LayerDepth, Callback),
 
@@ -667,6 +706,20 @@ namespace ClassicUO.Game.Scenes
             }
 
             _gumpCommands.Add(GumpDrawCommand.CreateCallback(toRender));
+        }
+
+        /// <summary>
+        /// Queue a rotated line (<see cref="UltimaBatcher2D.DrawLine"/>) between two screen
+        /// points with the given stroke thickness. Used for connecting plotted pins on maps.
+        /// </summary>
+        public void AddGumpLine(Texture2D texture, Vector2 start, Vector2 end, Vector3 hueVector, float stroke, float layerDepth)
+        {
+            if (texture == null)
+            {
+                return;
+            }
+
+            _gumpCommands.Add(GumpDrawCommand.CreateLine(texture, start, end, hueVector, stroke, layerDepth));
         }
 
         /// <summary>
@@ -964,6 +1017,24 @@ namespace ClassicUO.Game.Scenes
                         if (cmd.Font != null && !string.IsNullOrEmpty(cmd.TextString))
                         {
                             batcher.DrawString(cmd.Font, cmd.TextString, cmd.X, cmd.Y, cmd.HueVector, cmd.LayerDepth);
+                            done++;
+                        }
+                        break;
+                    }
+
+                    case GumpCommandKind.Line:
+                    {
+                        GumpRenderMetrics.SpriteCommands++;
+                        if (cmd.Texture != null && !cmd.Texture.IsDisposed)
+                        {
+                            batcher.DrawLine(
+                                cmd.Texture,
+                                new Vector2(cmd.Source.X, cmd.Source.Y),
+                                new Vector2(cmd.Dest.X, cmd.Dest.Y),
+                                cmd.HueVector,
+                                cmd.Alpha,
+                                cmd.LayerDepth
+                            );
                             done++;
                         }
                         break;

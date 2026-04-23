@@ -537,6 +537,60 @@ namespace ClassicUO.UnitTests.Game.Scenes
         }
 
         [Fact]
+        public void AddGumpLine_WithNullTexture_IsNoOp()
+        {
+            var lists = new RenderLists();
+
+            lists.AddGumpLine(null, new Vector2(0, 0), new Vector2(10, 10), Vector3.Zero, 1f, 1f);
+
+            Assert.Equal(0, lists.GumpCommandCount);
+        }
+
+        [Fact]
+        public void GumpDrawCommand_LineFactory_PackedStartAndEnd()
+        {
+            var cmd = GumpDrawCommand.CreateLine(
+                texture: null,
+                start: new Vector2(10, 20),
+                end: new Vector2(100, 200),
+                hueVector: new Vector3(0.5f, 0.25f, 1f),
+                stroke: 2f,
+                layerDepth: 3f
+            );
+
+            Assert.Equal(GumpCommandKind.Line, cmd.Kind);
+            Assert.Equal(10, cmd.Source.X);
+            Assert.Equal(20, cmd.Source.Y);
+            Assert.Equal(100, cmd.Dest.X);
+            Assert.Equal(200, cmd.Dest.Y);
+            Assert.Equal(2f, cmd.Alpha);           // stroke lives in Alpha
+            Assert.Equal(new Vector3(0.5f, 0.25f, 1f), cmd.HueVector);
+            Assert.Equal(3f, cmd.LayerDepth);
+        }
+
+        [Fact]
+        public void WithOffset_ShiftsBothLineEndpoints()
+        {
+            var cmd = GumpDrawCommand.CreateLine(
+                texture: null,
+                start: new Vector2(10, 20),
+                end: new Vector2(100, 200),
+                hueVector: Vector3.Zero,
+                stroke: 1f,
+                layerDepth: 1f
+            );
+
+            var shifted = cmd.WithOffset(5, 7);
+
+            Assert.Equal(15, shifted.Source.X);
+            Assert.Equal(27, shifted.Source.Y);
+            Assert.Equal(105, shifted.Dest.X);
+            Assert.Equal(207, shifted.Dest.Y);
+            Assert.Equal(1f, shifted.Alpha);   // stroke preserved
+            Assert.Equal(GumpCommandKind.Line, shifted.Kind);
+        }
+
+        [Fact]
         public void AddGumpNoAtlas_TextPath_NullShortCircuitsWithoutAllocation()
         {
             // Same allocation-budget guard for the typed text overload. With
