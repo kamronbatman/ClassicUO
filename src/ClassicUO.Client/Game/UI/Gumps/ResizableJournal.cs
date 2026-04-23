@@ -285,16 +285,35 @@ namespace ClassicUO.Game.UI.Gumps
             {
                 _lastX = X;
                 _lastY = Y;
-
             }
-            if (((Width != _lastWidth || Height != _lastHeight) && !Mouse.LButtonPressed))
+
+            // Note: Reposition used to be gated on !Mouse.LButtonPressed (i.e. only
+            // after the resize was released). That worked with the old per-frame
+            // tree walk because the base renderer saw the updated gump size and
+            // every child position was recomputed on the fly from a closure. With
+            // the retained command cache enabled, a cache miss rebuilds the tree
+            // during the drag — but the children still had their stale pre-drag
+            // dimensions, so the background and journal area froze at their old
+            // size while the resize grip tracked the new corner. OnResize now
+            // calls Reposition directly every frame of the drag instead. The guard
+            // here still catches external width/height changes (e.g. XML restore)
+            // that don't go through the resize grip path.
+            if (Width != _lastWidth || Height != _lastHeight)
+            {
                 Reposition();
+            }
 
             if (ReloadTabs)
             {
                 ReloadTabs = false;
                 BuildTabs();
             }
+        }
+
+        public override void OnResize()
+        {
+            base.OnResize();
+            Reposition();
         }
 
         public override void Dispose()
