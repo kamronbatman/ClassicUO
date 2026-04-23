@@ -20,6 +20,14 @@ namespace ClassicUO.Game.Scenes
         /// <summary>Typed text draw: renders a <see cref="RenderedText"/> at (X, Y).</summary>
         Text,
 
+        /// <summary>
+        /// Typed scrolled-text draw: renders a <see cref="RenderedText"/> using its
+        /// scroll-window <see cref="RenderedText.Draw"/> overload. Source stores the
+        /// scroll rectangle (X = scrollX, Y = scrollY, Width = windowW, Height = windowH).
+        /// Used by HtmlControl, StbTextBox, and the login textbox.
+        /// </summary>
+        TextScrolled,
+
         /// <summary>Typed sprite draw: renders a texture sub-rect (Source) into a screen rect (Dest).</summary>
         Sprite,
 
@@ -105,6 +113,36 @@ namespace ClassicUO.Game.Scenes
                 source: source,
                 dest: dest,
                 hueVector: hueVector,
+                layerDepth: layerDepth,
+                callback: null
+            );
+        }
+
+        /// <summary>
+        /// Factory: typed scrolled-text command. <paramref name="scrollWindow"/> maps to
+        /// the (sx, sy, width, height) parameters of <see cref="RenderedText.Draw"/>'s
+        /// scroll-window overload.
+        /// </summary>
+        public static GumpDrawCommand CreateTextScrolled(
+            RenderedText text,
+            int x,
+            int y,
+            Rectangle scrollWindow,
+            float layerDepth,
+            ushort hue
+        )
+        {
+            return new GumpDrawCommand(
+                kind: GumpCommandKind.TextScrolled,
+                text: text,
+                x: x,
+                y: y,
+                alpha: 0f,
+                hue: hue,
+                texture: null,
+                source: scrollWindow,
+                dest: default,
+                hueVector: default,
                 layerDepth: layerDepth,
                 callback: null
             );
@@ -313,6 +351,27 @@ namespace ClassicUO.Game.Scenes
         }
 
         /// <summary>
+        /// Convenience overload that uses the entire texture as the source rectangle. Useful
+        /// for solid-colour rectangles drawn against a 1×1 cached texture from
+        /// <c>SolidColorTextureCache</c>.
+        /// </summary>
+        public void AddGumpSprite(Texture2D texture, Rectangle dest, Vector3 hueVector, float layerDepth)
+        {
+            if (texture == null)
+            {
+                return;
+            }
+
+            _gumpCommands.Add(GumpDrawCommand.CreateSprite(
+                texture,
+                new Rectangle(0, 0, texture.Width, texture.Height),
+                dest,
+                hueVector,
+                layerDepth
+            ));
+        }
+
+        /// <summary>
         /// Queue a typed <see cref="RenderedText"/> draw. Zero-allocation; the flush path guards
         /// against destroyed/recycled text via <see cref="RenderedText.HasContent"/>.
         /// </summary>
@@ -324,6 +383,21 @@ namespace ClassicUO.Game.Scenes
             }
 
             _gumpCommands.Add(GumpDrawCommand.CreateText(text, x, y, layerDepth, alpha, hue));
+        }
+
+        /// <summary>
+        /// Queue a typed scrolled <see cref="RenderedText"/> draw for controls that
+        /// expose a sub-window of their laid-out text (HtmlControl, StbTextBox, login
+        /// textbox). <paramref name="scrollWindow"/> is (scrollX, scrollY, windowW, windowH).
+        /// </summary>
+        public void AddGumpNoAtlasScrolled(RenderedText text, int x, int y, Rectangle scrollWindow, float layerDepth, ushort hue = 0)
+        {
+            if (text == null)
+            {
+                return;
+            }
+
+            _gumpCommands.Add(GumpDrawCommand.CreateTextScrolled(text, x, y, scrollWindow, layerDepth, hue));
         }
 
         /// <summary>
@@ -508,6 +582,30 @@ namespace ClassicUO.Game.Scenes
                             cmd.Text.Draw(batcher, cmd.X, cmd.Y, cmd.LayerDepth, cmd.Alpha, cmd.Hue))
                         {
                             done++;
+                        }
+                        break;
+                    }
+
+                    case GumpCommandKind.TextScrolled:
+                    {
+                        if (cmd.Text != null && cmd.Text.HasContent)
+                        {
+                            // Source carries (scrollX, scrollY, windowW, windowH) for the
+                            // scroll-window RenderedText.Draw overload.
+                            if (cmd.Text.Draw(
+                                batcher,
+                                cmd.X,
+                                cmd.Y,
+                                cmd.Source.X,
+                                cmd.Source.Y,
+                                cmd.Source.Width,
+                                cmd.Source.Height,
+                                cmd.LayerDepth,
+                                cmd.Hue > 0 ? cmd.Hue : -1
+                            ))
+                            {
+                                done++;
+                            }
                         }
                         break;
                     }
