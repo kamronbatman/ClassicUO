@@ -8,6 +8,7 @@ using ClassicUO.Renderer;
 using ClassicUO.Utility;
 using ClassicUO.Utility.Logging;
 using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Graphics;
 using SDL3;
 using StbTextEditSharp;
 using System;
@@ -888,34 +889,25 @@ namespace ClassicUO.Game.UI.Controls
         public override bool AddToRenderLists(RenderLists renderLists, int x, int y, ref float layerDepthRef)
         {
             float layerDepth = layerDepthRef;
-            renderLists.AddGumpNoAtlas(
-                batcher =>
-                {
-                    if (batcher.ClipBegin(x, y, Width, Height))
-                    {
-                        RenderLists childRenderLists = new();
-                        base.AddToRenderLists(childRenderLists, x, y, ref layerDepth);
-                        childRenderLists.DrawRenderLists(batcher, sbyte.MaxValue);
-                        DrawSelection(batcher, x, y, layerDepth);
-                        _rendererText.Draw(batcher, x, y, layerDepth);
-                        DrawCaret(batcher, x, y, layerDepth);
 
-                        batcher.ClipEnd();
-                    }
-                    return true;
-                }
-            );
+            renderLists.PushClip(new Rectangle(x, y, Width, Height));
+            base.AddToRenderLists(renderLists, x, y, ref layerDepthRef);
+            EmitSelection(renderLists, x, y, layerDepth);
+            renderLists.AddGumpNoAtlas(_rendererText, x, y, layerDepth);
+            EmitCaret(renderLists, x, y, layerDepth);
+            renderLists.PopClip();
 
             return true;
         }
 
-        private protected void DrawSelection(UltimaBatcher2D batcher, int x, int y, float layerDepth)
+        private protected void EmitSelection(RenderLists renderLists, int x, int y, float layerDepth)
         {
             if (!AllowSelection)
             {
                 return;
             }
 
+            Texture2D selectionTex = SolidColorTextureCache.GetTexture(SELECTION_COLOR);
             Vector3 hueVector = ShaderHueTranslator.GetHueVector(0, false, 0.5f);
 
             int selectStart = Math.Min(Stb.SelectStart, Stb.SelectEnd);
@@ -957,11 +949,9 @@ namespace ClassicUO.Game.UI.Controls
                                 endX += _rendererText.GetCharWidth(info.Data[startSelectionIndex + k].Item);
                             }
 
-                            batcher.Draw
-                            (
-                                SolidColorTextureCache.GetTexture(SELECTION_COLOR),
-                                new Rectangle
-                                (
+                            renderLists.AddGumpSprite(
+                                selectionTex,
+                                new Rectangle(
                                     x + drawX + diffX,
                                     y + drawY,
                                     endX,
@@ -976,11 +966,9 @@ namespace ClassicUO.Game.UI.Controls
 
 
                         // do the whole line
-                        batcher.Draw
-                        (
-                            SolidColorTextureCache.GetTexture(SELECTION_COLOR),
-                            new Rectangle
-                            (
+                        renderLists.AddGumpSprite(
+                            selectionTex,
+                            new Rectangle(
                                 x + drawX + diffX,
                                 y + drawY,
                                 info.Width - drawX,
@@ -1001,11 +989,11 @@ namespace ClassicUO.Game.UI.Controls
             }
         }
 
-        protected virtual void DrawCaret(UltimaBatcher2D batcher, int x, int y, float layerDepth)
+        protected virtual void EmitCaret(RenderLists renderLists, int x, int y, float layerDepth)
         {
             if (HasKeyboardFocus)
             {
-                _rendererCaret.Draw(batcher, x + _caretScreenPosition.X, y + _caretScreenPosition.Y, layerDepth);
+                renderLists.AddGumpNoAtlas(_rendererCaret, x + _caretScreenPosition.X, y + _caretScreenPosition.Y, layerDepth);
             }
         }
 
