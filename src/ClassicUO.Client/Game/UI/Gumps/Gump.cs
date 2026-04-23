@@ -159,13 +159,25 @@ namespace ClassicUO.Game.UI.Gumps
         private bool _cacheContainsCallback;
 
         /// <summary>
+        /// Global toggle that forces the retained-mode cache on for every Gump
+        /// regardless of its per-instance <see cref="EnableRenderCache"/> flag.
+        /// Intended as a debug switch: flip it on to A/B the full system, observe
+        /// metrics via <see cref="UI.Gumps.DebugGump"/>, then pin the cache on
+        /// specific gumps whose invalidation coverage you've verified.
+        /// </summary>
+        public static bool DefaultEnableRenderCache;
+
+        /// <summary>
         /// Opt-in flag for the retained-mode command cache. When true, the
         /// gump's emitted command stream is snapshotted and replayed unchanged
         /// on subsequent frames until <see cref="InvalidateRenderCache"/> fires.
         /// Default false to preserve pre-cache behaviour until callers are
-        /// audited for render-affecting setters.
+        /// audited for render-affecting setters. The global
+        /// <see cref="DefaultEnableRenderCache"/> overrides this when set.
         /// </summary>
         public bool EnableRenderCache { get; set; }
+
+        private bool CacheEnabled => EnableRenderCache || DefaultEnableRenderCache;
 
         /// <summary>
         /// Bump the render version, forcing the next frame to rebuild the
@@ -192,8 +204,11 @@ namespace ClassicUO.Game.UI.Gumps
         /// </summary>
         internal void EmitCommandsInto(RenderLists target, int gumpX, int gumpY, ref float layerDepth)
         {
-            if (!EnableRenderCache)
+            GumpRenderMetrics.GumpsRendered++;
+
+            if (!CacheEnabled)
             {
+                GumpRenderMetrics.CacheBypassed++;
                 AddToRenderLists(target, gumpX, gumpY, ref layerDepth);
                 return;
             }
@@ -211,12 +226,14 @@ namespace ClassicUO.Game.UI.Gumps
 
             if (cacheStale)
             {
+                GumpRenderMetrics.CacheMisses++;
                 RebuildRenderCache(target, gumpX, gumpY, ref layerDepth);
                 return;
             }
 
             if (positionChanged)
             {
+                GumpRenderMetrics.CacheTranslationHits++;
                 int dx = gumpX - _cachedAtX;
                 int dy = gumpY - _cachedAtY;
 
@@ -237,6 +254,7 @@ namespace ClassicUO.Game.UI.Gumps
             }
 
             // Position unchanged and cache fresh: direct replay.
+            GumpRenderMetrics.CacheHits++;
             target.AppendCommands(_renderCache);
         }
 

@@ -132,6 +132,31 @@ namespace ClassicUO.Game.UI.Gumps
                             $"    - AvgDraw:{avgDrawMs:0.0}ms {CUOEnviroment.CurrentRefreshRate} FPS\n"
                         );
                     }
+
+                    // Gump render-cache telemetry. Values are a single-frame snapshot
+                    // captured at the end of the previous UIManager.Draw call.
+                    int total = GumpRenderMetrics.GumpsRendered;
+                    int hits = GumpRenderMetrics.CacheHits;
+                    int transl = GumpRenderMetrics.CacheTranslationHits;
+                    int miss = GumpRenderMetrics.CacheMisses;
+                    int bypass = GumpRenderMetrics.CacheBypassed;
+                    int cacheable = total - bypass;
+                    double hitPct = cacheable > 0 ? 100d * (hits + transl) / cacheable : 0d;
+
+                    sb.Append("- Gump Render Cache (global ");
+                    sb.Append(Gump.DefaultEnableRenderCache ? "ON)\n" : "off)\n");
+                    sb.Append(
+                        $"    - Gumps:{total} (cacheable:{cacheable}, bypass:{bypass})\n" +
+                        $"    - Cache: hit:{hits} drag:{transl} miss:{miss}  ({hitPct:0.0}% hit)\n" +
+                        $"    - Commands:{GumpRenderMetrics.CommandsEmitted} " +
+                        $"(spr:{GumpRenderMetrics.SpriteCommands} " +
+                        $"txt:{GumpRenderMetrics.TextCommands}" +
+                        (GumpRenderMetrics.TextScrolledCommands > 0 ? $"+{GumpRenderMetrics.TextScrolledCommands}" : "") +
+                        $" clip:{GumpRenderMetrics.ClipCommands} " +
+                        $"cb:{GumpRenderMetrics.CallbackCommands})\n" +
+                        $"    - Batcher: switches:{GumpRenderMetrics.BatcherTextureSwitches} " +
+                        $"flushes:{GumpRenderMetrics.BatcherFlushes}\n"
+                    );
                 }
                 else
                 {

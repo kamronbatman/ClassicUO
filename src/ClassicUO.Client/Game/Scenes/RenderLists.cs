@@ -642,6 +642,7 @@ namespace ClassicUO.Game.Scenes
 
             // AsSpan avoids the List<T> enumerator allocation on the hot path.
             var span = CollectionsMarshal.AsSpan(commands);
+            GumpRenderMetrics.CommandsEmitted += span.Length;
 
             // ClipBegin can return false when the requested rectangle is empty or
             // its intersection with the parent scissor is empty; in that case the
@@ -660,6 +661,7 @@ namespace ClassicUO.Game.Scenes
                 {
                     case GumpCommandKind.Text:
                     {
+                        GumpRenderMetrics.TextCommands++;
                         // HasContent rejects destroyed/empty text, which can happen when the
                         // underlying pooled RenderedText was returned to its pool between
                         // enqueue and flush (see QueuedPool<RenderedText>).
@@ -673,6 +675,7 @@ namespace ClassicUO.Game.Scenes
 
                     case GumpCommandKind.TextScrolled:
                     {
+                        GumpRenderMetrics.TextScrolledCommands++;
                         if (cmd.Text != null && cmd.Text.HasContent)
                         {
                             // Source carries (scrollX, scrollY, windowW, windowH) for the
@@ -697,6 +700,7 @@ namespace ClassicUO.Game.Scenes
 
                     case GumpCommandKind.Sprite:
                     {
+                        GumpRenderMetrics.SpriteCommands++;
                         if (cmd.Texture != null && !cmd.Texture.IsDisposed)
                         {
                             batcher.Draw(cmd.Texture, cmd.Dest, cmd.Source, cmd.HueVector, cmd.LayerDepth);
@@ -707,6 +711,7 @@ namespace ClassicUO.Game.Scenes
 
                     case GumpCommandKind.ClipPush:
                     {
+                        GumpRenderMetrics.ClipCommands++;
                         bool pushed = batcher.ClipBegin(cmd.Dest.X, cmd.Dest.Y, cmd.Dest.Width, cmd.Dest.Height);
                         if (clipDepth < clipPushed.Length)
                         {
@@ -718,6 +723,7 @@ namespace ClassicUO.Game.Scenes
 
                     case GumpCommandKind.ClipPop:
                     {
+                        GumpRenderMetrics.ClipCommands++;
                         if (clipDepth > 0)
                         {
                             clipDepth--;
@@ -731,6 +737,7 @@ namespace ClassicUO.Game.Scenes
 
                     case GumpCommandKind.Callback:
                     {
+                        GumpRenderMetrics.CallbackCommands++;
                         if (cmd.Callback != null && cmd.Callback.Invoke(batcher))
                         {
                             done++;

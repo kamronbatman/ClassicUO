@@ -361,9 +361,12 @@ namespace ClassicUO.Game.Managers
         public static void Draw(UltimaBatcher2D batcher)
         {
             _renderLists.Clear();
+            GumpRenderMetrics.BeginFrame();
 
             SortControlsByInfo();
 
+            // batcher.Begin() resets its TextureSwitches / FlushesDone counters,
+            // so everything we read after batcher.End() reflects only this UI pass.
             batcher.Begin();
             batcher.SetStencil(DepthStencilState.Default);
 
@@ -393,6 +396,9 @@ namespace ClassicUO.Game.Managers
 
             batcher.SetStencil(null);
             batcher.End();
+
+            GumpRenderMetrics.BatcherTextureSwitches = batcher.TextureSwitches;
+            GumpRenderMetrics.BatcherFlushes = batcher.FlushesDone;
         }
 
         public static void Add(Gump gump, bool front = true)
