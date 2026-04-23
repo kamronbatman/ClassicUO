@@ -27,6 +27,9 @@ namespace ClassicUO.Game.UI.Controls
         private bool _handlesKeyboardFocus;
         private Point _offset;
         private Control _parent;
+        private bool _isVisible = true;
+        private int _page;
+        private float _alpha = 1.0f;
 
         protected Control(Control parent = null)
         {
@@ -48,16 +51,31 @@ namespace ClassicUO.Game.UI.Controls
 
         public bool IsFromServer { get; set; }
 
-        public int Page { get; set; }
+        public int Page
+        {
+            get => _page;
+            set
+            {
+                if (_page != value)
+                {
+                    _page = value;
+                    NotifyRenderDirty();
+                }
+            }
+        }
 
         public Point Location
         {
             get => _bounds.Location;
             set
             {
-                X = value.X;
-                Y = value.Y;
-                _bounds.Location = value;
+                if (_bounds.Location != value)
+                {
+                    X = value.X;
+                    Y = value.Y;
+                    _bounds.Location = value;
+                    NotifyRenderDirty();
+                }
             }
         }
 
@@ -67,7 +85,18 @@ namespace ClassicUO.Game.UI.Controls
 
         public bool IsDisposed { get; private set; }
 
-        public bool IsVisible { get; set; } = true;
+        public bool IsVisible
+        {
+            get => _isVisible;
+            set
+            {
+                if (_isVisible != value)
+                {
+                    _isVisible = value;
+                    NotifyRenderDirty();
+                }
+            }
+        }
 
         public bool IsEnabled { get; set; }
 
@@ -85,7 +114,18 @@ namespace ClassicUO.Game.UI.Controls
 
         public bool IsFocused { get; set; }
 
-        public float Alpha { get; set; } = 1.0f;
+        public float Alpha
+        {
+            get => _alpha;
+            set
+            {
+                if (_alpha != value)
+                {
+                    _alpha = value;
+                    NotifyRenderDirty();
+                }
+            }
+        }
 
         public List<Control> Children { get; }
 
@@ -206,9 +246,12 @@ namespace ClassicUO.Game.UI.Controls
             get => _activePage;
             set
             {
-                _activePage = value;
-
-                OnPageChanged();
+                if (_activePage != value)
+                {
+                    _activePage = value;
+                    NotifyRenderDirty();
+                    OnPageChanged();
+                }
             }
         }
 
@@ -720,10 +763,33 @@ namespace ClassicUO.Game.UI.Controls
 
         protected virtual void OnChildAdded()
         {
+            NotifyRenderDirty();
         }
 
         protected virtual void OnChildRemoved()
         {
+            NotifyRenderDirty();
+        }
+
+        /// <summary>
+        /// Walks up the parent chain to find the owning <see cref="Gumps.Gump"/> and
+        /// bumps its render version so the gump's retained command cache will be
+        /// rebuilt on the next frame. Called automatically from render-affecting
+        /// property setters on this class; subclasses that add their own render-
+        /// affecting properties should call it from their setters too.
+        /// </summary>
+        protected internal void NotifyRenderDirty()
+        {
+            Control p = this;
+            while (p != null)
+            {
+                if (p is Gumps.Gump gump)
+                {
+                    gump.InvalidateRenderCache();
+                    return;
+                }
+                p = p._parent;
+            }
         }
 
         protected virtual void CloseWithRightClick()
