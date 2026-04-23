@@ -34,6 +34,17 @@ namespace ClassicUO.Game.Scenes
         /// </summary>
         TextScrolled,
 
+        /// <summary>
+        /// Typed clipped-text draw: renders a <see cref="RenderedText"/> clipped to a
+        /// sub-rectangle using the
+        /// <c>Draw(batcher, swidth, sheight, dx, dy, dwidth, dheight, offsetX, offsetY, depth, hue)</c>
+        /// overload. Dest stores (dx, dy, dwidth, dheight); Source stores
+        /// (offsetX, offsetY, swidth, sheight). Used by NameOverheadGump for
+        /// camera-space clipped names, and by the legacy JournalGump for its
+        /// scroll viewport.
+        /// </summary>
+        TextClipped,
+
         /// <summary>Typed sprite draw: renders a texture sub-rect (Source) into a screen rect (Dest).</summary>
         Sprite,
 
@@ -190,6 +201,38 @@ namespace ClassicUO.Game.Scenes
                 hueVector: hueVector,
                 font: font,
                 textString: text,
+                layerDepth: layerDepth,
+                callback: null
+            );
+        }
+
+        /// <summary>
+        /// Factory: typed clipped-text command. <paramref name="dest"/> is (dx, dy,
+        /// dwidth, dheight); <paramref name="sourceRect"/> encodes (offsetX, offsetY,
+        /// swidth, sheight) for the <c>Draw(batcher, swidth, sheight, dx, dy, dwidth,
+        /// dheight, offsetX, offsetY, depth, hue)</c> overload.
+        /// </summary>
+        public static GumpDrawCommand CreateTextClipped(
+            RenderedText text,
+            Rectangle dest,
+            Rectangle sourceRect,
+            float layerDepth,
+            ushort hue
+        )
+        {
+            return new GumpDrawCommand(
+                kind: GumpCommandKind.TextClipped,
+                text: text,
+                x: 0,
+                y: 0,
+                alpha: 0f,
+                hue: hue,
+                texture: null,
+                source: sourceRect,
+                dest: dest,
+                hueVector: default,
+                font: null,
+                textString: null,
                 layerDepth: layerDepth,
                 callback: null
             );
@@ -353,6 +396,13 @@ namespace ClassicUO.Game.Scenes
                     // coordinate space; don't shift Source. Only the anchor moves.
                     new GumpDrawCommand(Kind, Text, X + dx, Y + dy, Alpha, Hue, Texture, Source, Dest, HueVector,
                         Font, TextString, LayerDepth, Callback),
+
+                GumpCommandKind.TextClipped =>
+                    // Dest is the screen rect; Source is (offsetX, offsetY, swidth, sheight)
+                    // in text-local space. Shift Dest, leave Source untouched.
+                    new GumpDrawCommand(Kind, Text, X, Y, Alpha, Hue, Texture, Source,
+                        new Rectangle(Dest.X + dx, Dest.Y + dy, Dest.Width, Dest.Height),
+                        HueVector, Font, TextString, LayerDepth, Callback),
 
                 GumpCommandKind.Sprite =>
                     new GumpDrawCommand(Kind, Text, X, Y, Alpha, Hue, Texture, Source,
@@ -578,6 +628,30 @@ namespace ClassicUO.Game.Scenes
             }
 
             _gumpCommands.Add(GumpDrawCommand.CreateTextScrolled(text, x, y, scrollWindow, layerDepth, hue));
+        }
+
+        /// <summary>
+        /// Queue a typed clipped <see cref="RenderedText"/> draw using the
+        /// (swidth, sheight, dx, dy, dwidth, dheight, offsetX, offsetY) overload.
+        /// </summary>
+        /// <param name="text">Source rendered text.</param>
+        /// <param name="dest">Destination rect on screen (dx, dy, dwidth, dheight).</param>
+        /// <param name="sourceOffset">Source sub-rect in text-local space
+        /// (offsetX, offsetY, swidth, sheight).</param>
+        public void AddGumpNoAtlasClipped(
+            RenderedText text,
+            Rectangle dest,
+            Rectangle sourceOffset,
+            float layerDepth,
+            ushort hue = 0
+        )
+        {
+            if (text == null)
+            {
+                return;
+            }
+
+            _gumpCommands.Add(GumpDrawCommand.CreateTextClipped(text, dest, sourceOffset, layerDepth, hue));
         }
 
         /// <summary>
@@ -827,6 +901,33 @@ namespace ClassicUO.Game.Scenes
                                 cmd.Source.Height,
                                 cmd.LayerDepth,
                                 cmd.Hue > 0 ? cmd.Hue : -1
+                            ))
+                            {
+                                done++;
+                            }
+                        }
+                        break;
+                    }
+
+                    case GumpCommandKind.TextClipped:
+                    {
+                        GumpRenderMetrics.TextCommands++;
+                        if (cmd.Text != null && cmd.Text.HasContent)
+                        {
+                            // Source = (offsetX, offsetY, swidth, sheight)
+                            // Dest   = (dx, dy, dwidth, dheight)
+                            if (cmd.Text.Draw(
+                                batcher,
+                                cmd.Source.Width,   // swidth
+                                cmd.Source.Height,  // sheight
+                                cmd.Dest.X,         // dx
+                                cmd.Dest.Y,         // dy
+                                cmd.Dest.Width,     // dwidth
+                                cmd.Dest.Height,    // dheight
+                                cmd.Source.X,       // offsetX
+                                cmd.Source.Y,       // offsetY
+                                cmd.LayerDepth,
+                                cmd.Hue
                             ))
                             {
                                 done++;

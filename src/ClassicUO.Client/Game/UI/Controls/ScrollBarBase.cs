@@ -40,6 +40,12 @@ namespace ClassicUO.Game.UI.Controls
                     _value = MaxValue;
                 }
 
+                // Scroll changes affect what the owning gump renders (journal text,
+                // paperdoll contents, etc.) even though the scrollbar itself doesn't
+                // move on-screen for typed-command consumers that bake the scroll
+                // value at emit time. Walk to the owning Gump and invalidate.
+                NotifyRenderDirty();
+
                 ValueChanged.Raise();
             }
         }
