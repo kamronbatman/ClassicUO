@@ -10,6 +10,7 @@ using ClassicUO.Renderer;
 using ClassicUO.Resources;
 using ClassicUO.Utility;
 using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Graphics;
 using SDL3;
 using System;
 using System.Collections.Generic;
@@ -361,27 +362,17 @@ namespace ClassicUO.Game.UI.Gumps
             // handlers via _bookPage.RealignCaretAndActivePage(), so a single mismatch
             // between _caretScreenPosition and _pageCoords cannot spin SetActivePage
             // every frame.
-            renderLists.AddGumpNoAtlas
-            (
-                batcher =>
-                {
-                    if (!batcher.ClipBegin(x, y, Width, Height))
-                    {
-                        return true;
-                    }
+            renderLists.PushClip(new Rectangle(x, y, Width, Height));
 
-                    DrawBookPage(batcher, x, y, layerDepth, (ActivePage - 1) * 2, RIGHT_X);
-                    DrawBookPage(batcher, x, y, layerDepth, (ActivePage - 1) * 2 - 1, LEFT_X);
+            EmitBookPage(renderLists, x, y, layerDepth, (ActivePage - 1) * 2, RIGHT_X);
+            EmitBookPage(renderLists, x, y, layerDepth, (ActivePage - 1) * 2 - 1, LEFT_X);
 
-                    batcher.ClipEnd();
-                    return true;
-                }
-            );
+            renderLists.PopClip();
 
             return true;
         }
 
-        private void DrawBookPage(UltimaBatcher2D batcher, int x, int y, float layerDepth, int pageIndex, int pageX)
+        private void EmitBookPage(RenderLists renderLists, int x, int y, float layerDepth, int pageIndex, int pageX)
         {
             if (pageIndex < 0 || pageIndex >= BookPageCount)
             {
@@ -392,21 +383,26 @@ namespace ClassicUO.Game.UI.Gumps
             int phy = _bookPage._pageCoords[pageIndex, 1];
             RenderedText t = _bookPage.renderedText;
 
-            _bookPage.DrawSelection(batcher, x + pageX, y + UPPER_MARGIN, poy, poy + phy, layerDepth);
-            t.Draw(batcher, x + pageX, y + UPPER_MARGIN, 0, poy, t.Width, phy, layerDepth);
+            _bookPage.EmitSelection(renderLists, x + pageX, y + UPPER_MARGIN, poy, poy + phy, layerDepth);
+
+            renderLists.AddGumpNoAtlasScrolled(
+                t,
+                x + pageX,
+                y + UPPER_MARGIN,
+                new Rectangle(0, poy, t.Width, phy),
+                layerDepth
+            );
 
             if (pageIndex == _bookPage._caretPage
                 && _bookPage.HasKeyboardFocus
                 && _bookPage._caretPos.Y >= poy
                 && _bookPage._caretPos.Y < poy + phy)
             {
-                _bookPage.renderedCaret.Draw(
-                    batcher,
+                renderLists.AddGumpNoAtlasScrolled(
+                    _bookPage.renderedCaret,
                     _bookPage._caretPos.X + x + pageX,
                     _bookPage._caretPos.Y + y + UPPER_MARGIN - poy,
-                    0, 0,
-                    _bookPage.renderedCaret.Width,
-                    _bookPage.renderedCaret.Height,
+                    new Rectangle(0, 0, _bookPage.renderedCaret.Width, _bookPage.renderedCaret.Height),
                     layerDepth
                 );
             }
@@ -641,8 +637,9 @@ namespace ClassicUO.Game.UI.Gumps
                 }
             }
 
-            internal void DrawSelection(UltimaBatcher2D batcher, int x, int y, int starty, int endy, float layerDepth)
+            internal void EmitSelection(RenderLists renderLists, int x, int y, int starty, int endy, float layerDepth)
             {
+                Texture2D selectionTex = SolidColorTextureCache.GetTexture(SELECTION_COLOR);
                 Vector3 hueVector = ShaderHueTranslator.GetHueVector(0, false, 0.5f);
 
                 int selectStart = Math.Min(Stb.SelectStart, Stb.SelectEnd);
@@ -685,11 +682,9 @@ namespace ClassicUO.Game.UI.Gumps
 
                                 if (drawY >= starty && drawY <= endy)
                                 {
-                                    batcher.Draw
-                                    (
-                                        SolidColorTextureCache.GetTexture(SELECTION_COLOR),
-                                        new Rectangle
-                                        (
+                                    renderLists.AddGumpSprite(
+                                        selectionTex,
+                                        new Rectangle(
                                             x + drawX,
                                             y + drawY - starty,
                                             endX,
@@ -707,11 +702,9 @@ namespace ClassicUO.Game.UI.Gumps
                             // do the whole line
                             if (drawY >= starty && drawY <= endy)
                             {
-                                batcher.Draw
-                                (
-                                    SolidColorTextureCache.GetTexture(SELECTION_COLOR),
-                                    new Rectangle
-                                    (
+                                renderLists.AddGumpSprite(
+                                    selectionTex,
+                                    new Rectangle(
                                         x + drawX,
                                         y + drawY - starty,
                                         info.Width - drawX,
