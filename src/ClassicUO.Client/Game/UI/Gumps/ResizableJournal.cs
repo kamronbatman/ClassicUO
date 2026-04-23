@@ -11,6 +11,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Xml;
 using Point = Microsoft.Xna.Framework.Point;
+using Rectangle = Microsoft.Xna.Framework.Rectangle;
 
 namespace ClassicUO.Game.UI.Gumps
 {
@@ -350,43 +351,35 @@ namespace ClassicUO.Game.UI.Gumps
             public override bool AddToRenderLists(RenderLists renderLists, int x, int y, ref float layerDepthRef)
             {
                 base.AddToRenderLists(renderLists, x, y, ref layerDepthRef);
-                float layerDepth = layerDepthRef;
 
-                renderLists.AddGumpNoAtlas(
-                    batcher =>
+                // Clip everything below to the journal viewport, then walk the entry
+                // list emitting each visible line as typed Label / Text commands into
+                // the parent stream. Previously this was a closure that built a
+                // throwaway nested RenderLists and flushed it; the closure path also
+                // had the "accumulating captured `my`" bug fixed earlier, but with a
+                // typed stream we sidestep both problems and get cache participation.
+                renderLists.PushClip(new Rectangle(x, y, Width, Height));
+
+                int my = y;
+                foreach (JournalData journalEntry in journalDatas)
+                {
+                    if (journalEntry == null || string.IsNullOrEmpty(journalEntry.EntryText.Text))
+                        continue;
+
+                    if (!CanBeDrawn(journalEntry.TextType, journalEntry.MessageType))
+                        continue;
+
+                    if (my + journalEntry.EntryText.Height - y >= _scrollBar.Value && my - y <= _scrollBar.Value + _scrollBar.Height)
                     {
-                        if (batcher.ClipBegin(x, y, Width, Height))
-                        {
-                            // `my` MUST be declared inside the closure — a closure-local
-                            // local would accumulate between cache-hit replays (it is
-                            // mutated inside the loop below), leaving subsequent frames
-                            // with a y-offset well past the scroll bounds so everything
-                            // fails the visibility check and the journal renders blank.
-                            int my = y;
-
-                            RenderLists childRenderLists = new();
-                            foreach (JournalData journalEntry in journalDatas)
-                            {
-                                if (journalEntry == null || string.IsNullOrEmpty(journalEntry.EntryText.Text))
-                                    continue;
-
-                                if (!CanBeDrawn(journalEntry.TextType, journalEntry.MessageType))
-                                    continue;
-
-                                if (my + journalEntry.EntryText.Height - y >= _scrollBar.Value && my - y <= _scrollBar.Value + _scrollBar.Height)
-                                {
-                                    var depth = layerDepth;
-                                    journalEntry.TimeStamp.AddToRenderLists(childRenderLists, x, my - _scrollBar.Value, ref depth);
-                                    journalEntry.EntryText.AddToRenderLists(childRenderLists, x + (journalEntry.TimeStamp.Width + 5), my - _scrollBar.Value, ref depth);
-                                }
-                                my += journalEntry.EntryText.Height;
-                            }
-                            childRenderLists.DrawRenderLists(batcher, sbyte.MaxValue);
-                            batcher.ClipEnd();
-                        }
-                        return true;
+                        float depth = layerDepthRef;
+                        journalEntry.TimeStamp.AddToRenderLists(renderLists, x, my - _scrollBar.Value, ref depth);
+                        journalEntry.EntryText.AddToRenderLists(renderLists, x + (journalEntry.TimeStamp.Width + 5), my - _scrollBar.Value, ref depth);
                     }
-                );
+                    my += journalEntry.EntryText.Height;
+                }
+
+                renderLists.PopClip();
+
                 return true;
             }
 

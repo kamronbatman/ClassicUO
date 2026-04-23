@@ -578,41 +578,34 @@ namespace ClassicUO.Game.UI.Gumps
 
         public override bool AddToRenderLists(RenderLists renderLists, int x, int y, ref float layerDepthRef)
         {
-            var scale = 1f;
-            var depth = layerDepthRef;
+            // Emit one typed Text command per chat line, stacking upward from just
+            // above the input box. Iteration happens at emit time — cache rebuild
+            // runs whenever AddLine or the fade-out Update path bumps the version.
+            int yy = TextBoxControl.Y + y - 20;
+            LinkedListNode<ChatLineTime> last = _textEntries.Last;
 
-            renderLists.AddGumpNoAtlas(batcher =>
+            while (last != null)
             {
-                // `yy` and `last` MUST be declared inside the closure. They were
-                // local captures before; the closure mutated both inside its loop,
-                // so every cache-hit replay would start where the previous run
-                // left off instead of at the current list tail — causing
-                // messages to disappear once the render cache was enabled.
-                int yy = TextBoxControl.Y + y - 20;
-                LinkedListNode<ChatLineTime> last = _textEntries.Last;
+                LinkedListNode<ChatLineTime> prev = last.Previous;
+                var entry = last.Value;
 
-                while (last != null)
+                if (entry.IsDisposed)
                 {
-                    LinkedListNode<ChatLineTime> prev = last.Previous;
-
-                    if (last.Value.IsDisposed)
-                    {
-                        _textEntries.Remove(last);
-                    }
-                    else
-                    {
-                        yy -= last.Value.TextHeight;
-
-                        if (yy >= y)
-                        {
-                            last.Value.Draw(batcher, x + 2, yy, depth, scale);
-                        }
-                    }
-
-                    last = prev;
+                    // Drop disposed entries lazily during render. Safe because
+                    // we've already captured `prev` above.
+                    _textEntries.Remove(last);
                 }
-                return true;
-            });
+                else
+                {
+                    yy -= entry.TextHeight;
+                    if (yy >= y)
+                    {
+                        renderLists.AddGumpNoAtlas(entry.RenderedText, x + 2, yy, layerDepthRef);
+                    }
+                }
+
+                last = prev;
+            }
 
             return base.AddToRenderLists(renderLists, x, y, ref layerDepthRef);
         }
@@ -1113,6 +1106,11 @@ namespace ClassicUO.Game.UI.Gumps
             public bool IsDisposed => _renderedText == null || _renderedText.IsDestroyed;
 
             public int TextHeight => _renderedText?.Height ?? 0;
+
+            /// <summary>Access to the underlying RenderedText so callers can queue
+            /// a typed Text command directly instead of invoking <see cref="Draw"/>
+            /// through a closure.</summary>
+            public RenderedText RenderedText => _renderedText;
 
             public void Update()
             {
