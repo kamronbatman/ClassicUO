@@ -469,7 +469,7 @@ namespace ClassicUO.Game.UI.Gumps
                     return;
                 }
 
-                int newX = X + Width - (_scrollBar.Width >> 1) + 5;
+                int newX = X + Width - (_scrollBar.Width >> 1) + 8;
                 int newHeight = Height;
                 if (_scrollBar.X != newX || _scrollBar.Height != newHeight)
                 {

@@ -42,7 +42,7 @@ namespace ClassicUO.Game.UI.Controls
             {
                 _scrollBar = new ScrollFlag
                 {
-                    X = Width - 19, Height = h
+                    X = Width - 15, Height = h
                 };
 
                 Width += 15;
@@ -61,7 +61,7 @@ namespace ClassicUO.Game.UI.Controls
         }
 
 
-        public int ScrollMaxHeight { get; set; } = -1;
+        public int ScrollMaxHeight { get; set; }
         public ScrollbarBehaviour ScrollbarBehaviour { get; set; }
         public int ScrollValue => _scrollBar.Value;
         public int ScrollMinValue => _scrollBar.MinValue;
