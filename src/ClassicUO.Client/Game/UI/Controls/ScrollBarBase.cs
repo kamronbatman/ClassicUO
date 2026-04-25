@@ -104,6 +104,11 @@ namespace ClassicUO.Game.UI.Controls
 
         public override void Update()
         {
+            // Capture before any mutation: CalculateByPosition writes _sliderPosition
+            // directly during slider drag, so comparing to _sliderPosition AFTER
+            // CalculateByPosition would always see "no change" and miss the notify.
+            int prevSliderPosition = _sliderPosition;
+
             base.Update();
 
             if (_btnSliderClicked)
@@ -120,6 +125,16 @@ namespace ClassicUO.Game.UI.Controls
             }
 
             _sliderPosition = GetSliderYPosition();
+
+            // Notify the owning gump's cache when the slider moved relative to
+            // the previous frame. Both _value (via CalculateByPosition's direct
+            // write) and the visual slider position are baked into the typed-
+            // command stream at emit time; without this, the slider freezes
+            // mid-drag and only catches up on mouse release.
+            if (_sliderPosition != prevSliderPosition)
+            {
+                NotifyRenderDirty();
+            }
 
             //_rectSlider.Y = _textureUpButton[0].Height + _sliderPosition;
 

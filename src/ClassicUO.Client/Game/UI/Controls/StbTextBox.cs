@@ -329,7 +329,15 @@ namespace ClassicUO.Game.UI.Controls
 
         protected void UpdateCaretScreenPosition()
         {
-            _caretScreenPosition = _rendererText.GetCaretPosition(Stb.CursorIndex);
+            Point newPos = _rendererText.GetCaretPosition(Stb.CursorIndex);
+            if (newPos != _caretScreenPosition)
+            {
+                _caretScreenPosition = newPos;
+                // The caret's draw position is baked into the gump's typed-command
+                // cache at emit time; without this notify, dragging or arrow-keying
+                // the caret would update _caretScreenPosition without re-emitting.
+                NotifyRenderDirty();
+            }
         }
 
         private ControlKeys ApplyShiftIfNecessary(ControlKeys k)
@@ -475,6 +483,9 @@ namespace ClassicUO.Game.UI.Controls
         {
             base.OnFocusEnter();
             CaretIndex = Text?.Length ?? 0;
+            // EmitCaret only emits when HasKeyboardFocus is true, so a focus change
+            // flips the caret on/off in the cached command stream.
+            NotifyRenderDirty();
         }
 
         internal override void OnFocusLost()
@@ -484,6 +495,7 @@ namespace ClassicUO.Game.UI.Controls
                 Stb.SelectStart = Stb.SelectEnd = 0;
             }
 
+            NotifyRenderDirty();
             base.OnFocusLost();
         }
 
@@ -1032,7 +1044,16 @@ namespace ClassicUO.Game.UI.Controls
                 return;
             }
 
+            int prevSelStart = Stb.SelectStart;
+            int prevSelEnd = Stb.SelectEnd;
             Stb.Drag(Mouse.Position.X, Mouse.Position.Y);
+
+            // Stb.Drag mutates SelectStart/SelectEnd directly; the selection
+            // rectangles are baked into the cache at emit time, so notify on change.
+            if (Stb.SelectStart != prevSelStart || Stb.SelectEnd != prevSelEnd)
+            {
+                NotifyRenderDirty();
+            }
         }
 
         public override void Dispose()

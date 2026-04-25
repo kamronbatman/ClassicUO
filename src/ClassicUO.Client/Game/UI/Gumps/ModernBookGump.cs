@@ -517,6 +517,16 @@ namespace ClassicUO.Game.UI.Gumps
 
             internal bool _ServerUpdate;
 
+            // _bookPage is intentionally NOT in the gump tree (the parent renders
+            // it manually so it can clip against the book artwork). The default
+            // NotifyRenderDirty walks _parent → null and never reaches the
+            // ModernBookGump, so caret moves and selection drags never invalidate
+            // the gump cache. Redirect explicitly to the owning gump.
+            protected internal override void NotifyRenderDirty()
+            {
+                _gump?.InvalidateRenderCache();
+            }
+
             internal int GetCaretPage()
             {
                 Point p = _rendererText.GetCaretPosition(CaretIndex);
@@ -590,7 +600,14 @@ namespace ClassicUO.Game.UI.Gumps
                         y += _pageCoords[_focusPage, 0] - (UPPER_MARGIN + _gump.Y);
                     }
 
+                    int prevSelStart = Stb.SelectStart;
+                    int prevSelEnd = Stb.SelectEnd;
                     Stb.Drag(x, y);
+
+                    if (Stb.SelectStart != prevSelStart || Stb.SelectEnd != prevSelEnd)
+                    {
+                        NotifyRenderDirty();
+                    }
                 }
             }
 

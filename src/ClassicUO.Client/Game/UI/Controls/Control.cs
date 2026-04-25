@@ -855,7 +855,7 @@ namespace ClassicUO.Game.UI.Controls
         /// property setters on this class; subclasses that add their own render-
         /// affecting properties should call it from their setters too.
         /// </summary>
-        protected internal void NotifyRenderDirty()
+        protected internal virtual void NotifyRenderDirty()
         {
             Control p = this;
             while (p != null)
