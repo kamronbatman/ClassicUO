@@ -591,6 +591,157 @@ namespace ClassicUO.UnitTests.Game.Scenes
         }
 
         [Fact]
+        public void WithOffset_ShiftsLayerDepth_OnText()
+        {
+            // Background: gump cache replays commands with their LayerDepth baked in
+            // at cache-build time. When the gump's position in UIManager.Gumps changes
+            // (e.g. clicked-to-front), its starting depth slot changes too and cached
+            // commands need their depths shifted on replay or the GPU's depth-test
+            // (DepthStencilState.Default) lets behind-gump pixels bleed through the
+            // now-front gump until the next forced rebuild.
+            var cmd = GumpDrawCommand.CreateText(null, 10, 20, layerDepth: -9990f, alpha: 1f, hue: 0);
+
+            var shifted = cmd.WithOffset(0, 0, dz: 10f);
+
+            Assert.Equal(-9980f, shifted.LayerDepth);
+            Assert.Equal(10, shifted.X);   // position untouched when dx/dy are zero
+            Assert.Equal(20, shifted.Y);
+        }
+
+        [Fact]
+        public void WithOffset_ShiftsLayerDepth_OnSprite()
+        {
+            var cmd = GumpDrawCommand.CreateSprite(
+                texture: null,
+                source: new Rectangle(0, 0, 32, 32),
+                dest: new Rectangle(5, 6, 32, 32),
+                hueVector: Vector3.Zero,
+                layerDepth: -9985f
+            );
+
+            var shifted = cmd.WithOffset(2, 3, dz: -10f);
+
+            Assert.Equal(-9995f, shifted.LayerDepth);
+            Assert.Equal(new Rectangle(7, 9, 32, 32), shifted.Dest);
+        }
+
+        [Fact]
+        public void WithOffset_ShiftsLayerDepth_AllDrawKinds()
+        {
+            // Comprehensive guard that every draw-emitting kind shifts LayerDepth.
+            // ClipPush/ClipPop/Callback are intentionally excluded — their flush path
+            // does not read LayerDepth, so shifting it would be dead work.
+            var kinds = new (string name, GumpDrawCommand cmd)[]
+            {
+                ("Text",         GumpDrawCommand.CreateText(null, 0, 0, 1f, 1f, 0)),
+                ("TextScrolled", GumpDrawCommand.CreateTextScrolled(null, 0, 0, default, 1f, 0)),
+                ("TextClipped",  GumpDrawCommand.CreateTextClipped(null, default, default, 1f, 0)),
+                ("Sprite",       GumpDrawCommand.CreateSprite(null, default, default, default, 1f)),
+                ("SpriteTiled",  GumpDrawCommand.CreateSpriteTiled(null, default, default, default, 1f)),
+                ("StringFont",   GumpDrawCommand.CreateStringFont(null, "x", 0, 0, default, 1f)),
+                ("Line",         GumpDrawCommand.CreateLine(null, Vector2.Zero, Vector2.Zero, default, 1f, 1f)),
+            };
+
+            foreach (var (name, cmd) in kinds)
+            {
+                var shifted = cmd.WithOffset(0, 0, dz: 5f);
+                Assert.Equal(6f, shifted.LayerDepth);
+                Assert.Equal(cmd.Kind, shifted.Kind);
+            }
+        }
+
+        [Fact]
+        public void WithOffset_ClipPush_DepthIgnored()
+        {
+            // ClipPush's flush path is batcher.ClipBegin(Dest) — never reads LayerDepth.
+            // Shifting it would be harmless but dead work; the implementation keeps the
+            // original value so this contract is explicit.
+            var cmd = GumpDrawCommand.CreateClipPush(new Rectangle(0, 0, 100, 100));
+
+            var shifted = cmd.WithOffset(5, 6, dz: 1234f);
+
+            Assert.Equal(0f, shifted.LayerDepth);   // original was 0; not 1234
+            Assert.Equal(new Rectangle(5, 6, 100, 100), shifted.Dest);   // position still shifts
+        }
+
+        [Fact]
+        public void WithOffset_ZeroDeltaIncludingDepth_ReturnsSame()
+        {
+            // Early-return optimization: nothing changed → return the same struct value.
+            var cmd = GumpDrawCommand.CreateText(null, 10, 20, layerDepth: 5f, alpha: 1f, hue: 42);
+
+            var same = cmd.WithOffset(0, 0, 0f);
+
+            Assert.Equal(cmd.X, same.X);
+            Assert.Equal(cmd.Y, same.Y);
+            Assert.Equal(cmd.LayerDepth, same.LayerDepth);
+            Assert.Equal(cmd.Hue, same.Hue);
+        }
+
+        [Fact]
+        public void AppendCommandsTranslated_ShiftsLayerDepth()
+        {
+            // End-to-end of the click-to-front replay primitive: the cached commands
+            // were baked at depth -9990 (gump was at the back of the z-stack) and the
+            // gump just moved to the front (depth -9980). dz=+10 must lift every
+            // draw-emitting command's LayerDepth by 10 so the GPU depth-test puts
+            // the now-front gump's pixels in front of the now-back gump's pixels.
+            var source = new System.Collections.Generic.List<GumpDrawCommand>
+            {
+                GumpDrawCommand.CreateClipPush(new Rectangle(0, 0, 100, 100)),
+                GumpDrawCommand.CreateSprite(null, new Rectangle(0, 0, 50, 50),
+                    new Rectangle(10, 20, 50, 50), default, layerDepth: -9990f),
+                GumpDrawCommand.CreateText(null, 30, 40, layerDepth: -9989.99f, alpha: 1f, hue: 0),
+                GumpDrawCommand.CreateClipPop(),
+            };
+
+            var lists = new RenderLists();
+            lists.AppendCommandsTranslated(source, dx: 3, dy: 7, dz: 10f);
+
+            Assert.Equal(4, lists.GumpCommandCount);
+
+            // ClipPush: position shifted, depth left at original 0 (depth-irrelevant).
+            Assert.Equal(new Rectangle(3, 7, 100, 100), lists.PeekGumpCommand(0).Dest);
+            Assert.Equal(0f, lists.PeekGumpCommand(0).LayerDepth);
+
+            // Sprite: position AND depth shifted.
+            Assert.Equal(new Rectangle(13, 27, 50, 50), lists.PeekGumpCommand(1).Dest);
+            Assert.Equal(-9980f, lists.PeekGumpCommand(1).LayerDepth);
+
+            // Text: position AND depth shifted.
+            Assert.Equal(33, lists.PeekGumpCommand(2).X);
+            Assert.Equal(47, lists.PeekGumpCommand(2).Y);
+            Assert.Equal(-9979.99f, lists.PeekGumpCommand(2).LayerDepth, precision: 4);
+
+            // ClipPop is depth-independent.
+            Assert.Equal(GumpCommandKind.ClipPop, lists.PeekGumpCommand(3).Kind);
+        }
+
+        [Fact]
+        public void AppendCommandsTranslated_DepthOnlyShift_PreservesPositions()
+        {
+            // The pure z-stack-move case: gump didn't drag, only its position in the
+            // Gumps LinkedList changed. dx=dy=0, dz!=0; positions stay put, depths lift.
+            var source = new System.Collections.Generic.List<GumpDrawCommand>
+            {
+                GumpDrawCommand.CreateText(null, 100, 200, layerDepth: -9990f, alpha: 1f, hue: 0),
+                GumpDrawCommand.CreateSprite(null, default,
+                    new Rectangle(50, 60, 70, 80), default, layerDepth: -9989f),
+            };
+
+            var lists = new RenderLists();
+            lists.AppendCommandsTranslated(source, dx: 0, dy: 0, dz: 20f);
+
+            Assert.Equal(2, lists.GumpCommandCount);
+            Assert.Equal(100, lists.PeekGumpCommand(0).X);
+            Assert.Equal(200, lists.PeekGumpCommand(0).Y);
+            Assert.Equal(-9970f, lists.PeekGumpCommand(0).LayerDepth);
+
+            Assert.Equal(new Rectangle(50, 60, 70, 80), lists.PeekGumpCommand(1).Dest);
+            Assert.Equal(-9969f, lists.PeekGumpCommand(1).LayerDepth);
+        }
+
+        [Fact]
         public void AddGumpNoAtlas_TextPath_NullShortCircuitsWithoutAllocation()
         {
             // Same allocation-budget guard for the typed text overload. With

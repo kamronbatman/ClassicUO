@@ -157,6 +157,16 @@ namespace ClassicUO.Game.UI.Gumps
         private int _lastBuiltRenderVersion = -1;
         private int _cachedAtX;
         private int _cachedAtY;
+        // Starting layerDepth that was passed in when the cache was last built. The
+        // per-gump depth slot is assigned by UIManager.Draw based on each gump's
+        // position in the Gumps LinkedList: -10000 + N*GumpDepthStride. That slot
+        // changes whenever the list is reordered (MakeTopMostGump on click) or when
+        // gumps are added/removed in front of this one. Without tracking the entry
+        // depth and shifting cached LayerDepth values on replay, cached commands
+        // keep their old depths after a reorder, the GPU's depth-test (Default
+        // DepthStencilState) sees stale values, and a behind-gump's text bleeds
+        // through a now-in-front gump until the next forced rebuild.
+        private float _cachedAtDepth;
         private bool _cacheContainsCallback;
 
         // Debug-build aid: warn once per gump type when a Callback command sneaks
@@ -228,13 +238,20 @@ namespace ClassicUO.Game.UI.Gumps
                 return;
             }
 
+            // Snapshot the entry depth before AddToRenderLists advances it: this is the
+            // gump's current depth slot, what each command's LayerDepth needs to be
+            // anchored to. We'll compare against _cachedAtDepth to detect z-stack moves.
+            float gumpStartDepth = layerDepth;
+
             bool cacheStale = _renderCache == null || _renderVersion != _lastBuiltRenderVersion;
             bool positionChanged = gumpX != _cachedAtX || gumpY != _cachedAtY;
+            bool depthChanged = gumpStartDepth != _cachedAtDepth;
 
-            // A cached gump that only moved can skip the rebuild if and only if none
-            // of its cached commands is a Callback (captured positions inside closures
-            // wouldn't follow the translation).
-            if (!cacheStale && positionChanged && _cacheContainsCallback)
+            // A cached gump that only moved (in screen space or z-stack) can skip the
+            // rebuild if and only if none of its cached commands is a Callback —
+            // closures freeze captured positions AND captured depths, so neither a
+            // translation nor a depth shift can correctly update them.
+            if (!cacheStale && (positionChanged || depthChanged) && _cacheContainsCallback)
             {
                 cacheStale = true;
             }
@@ -242,18 +259,19 @@ namespace ClassicUO.Game.UI.Gumps
             if (cacheStale)
             {
                 GumpRenderMetrics.CacheMisses++;
-                RebuildRenderCache(target, gumpX, gumpY, ref layerDepth);
+                RebuildRenderCache(target, gumpX, gumpY, gumpStartDepth, ref layerDepth);
                 return;
             }
 
-            if (positionChanged)
+            if (positionChanged || depthChanged)
             {
                 GumpRenderMetrics.CacheTranslationHits++;
                 int dx = gumpX - _cachedAtX;
                 int dy = gumpY - _cachedAtY;
+                float dz = gumpStartDepth - _cachedAtDepth;
 
                 // Emit the translated commands into the per-frame stream.
-                target.AppendCommandsTranslated(_renderCache, dx, dy);
+                target.AppendCommandsTranslated(_renderCache, dx, dy, dz);
 
                 // Rebake the cache in-place so subsequent frames can take the
                 // zero-delta direct-replay path instead of re-translating. This
@@ -261,10 +279,11 @@ namespace ClassicUO.Game.UI.Gumps
                 // translated append — not a net regression.
                 for (int i = 0; i < _renderCache.Count; i++)
                 {
-                    _renderCache[i] = _renderCache[i].WithOffset(dx, dy);
+                    _renderCache[i] = _renderCache[i].WithOffset(dx, dy, dz);
                 }
                 _cachedAtX = gumpX;
                 _cachedAtY = gumpY;
+                _cachedAtDepth = gumpStartDepth;
                 return;
             }
 
@@ -273,7 +292,7 @@ namespace ClassicUO.Game.UI.Gumps
             target.AppendCommands(_renderCache);
         }
 
-        private void RebuildRenderCache(RenderLists target, int gumpX, int gumpY, ref float layerDepth)
+        private void RebuildRenderCache(RenderLists target, int gumpX, int gumpY, float gumpStartDepth, ref float layerDepth)
         {
             int startIndex = target.GumpCommandCount;
             AddToRenderLists(target, gumpX, gumpY, ref layerDepth);
@@ -295,6 +314,7 @@ namespace ClassicUO.Game.UI.Gumps
             _lastBuiltRenderVersion = _renderVersion;
             _cachedAtX = gumpX;
             _cachedAtY = gumpY;
+            _cachedAtDepth = gumpStartDepth;
 
 #if DEBUG
             if (_cacheContainsCallback && EnableRenderCache)
