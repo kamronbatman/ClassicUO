@@ -164,17 +164,15 @@ namespace ClassicUO.Game.UI.Gumps
                 if (_graphic != 0)
                 {
                     float layerDepth = layerDepthRef;
-                    renderLists.AddGumpWithAtlas
-                    (
-                        (batcher) =>
-                        {
-                            ref readonly var artInfo = ref Client.Game.UO.Arts.GetArt(_graphic);
+                    ref readonly var artInfo = ref Client.Game.UO.Arts.GetArt(_graphic);
+                    Vector3 hueVector = ShaderHueTranslator.GetHueVector(_hue, _isPartial, 1f);
 
-                            Vector3 hueVector = ShaderHueTranslator.GetHueVector(_hue, _isPartial, 1f);
-
-                            batcher.Draw(artInfo.Texture, new Vector2(x, y), artInfo.UV, hueVector, layerDepth);
-                            return true;
-                        }
+                    renderLists.AddGumpSprite(
+                        artInfo.Texture,
+                        artInfo.UV,
+                        new Rectangle(x, y, artInfo.UV.Width, artInfo.UV.Height),
+                        hueVector,
+                        layerDepth
                     );
                 }
 

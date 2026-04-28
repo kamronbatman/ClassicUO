@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
 using System;
+using System.IO;
+using System.Runtime.CompilerServices;
+using System.Text.RegularExpressions;
 using ClassicUO.Game;
 using ClassicUO.Game.Scenes;
 using ClassicUO.Renderer;
@@ -762,6 +765,59 @@ namespace ClassicUO.UnitTests.Game.Scenes
                 $"AddGumpNoAtlas(null text) allocated {delta} bytes; expected zero."
             );
             Assert.Equal(0, lists.GumpCommandCount);
+        }
+
+        // Source-level regression guard: every gump/control whose closures were
+        // migrated to typed GumpDrawCommand values (BuffGump, AnchorableGump,
+        // MenuGump, WorldViewportGump, UseSpellButtonGump, ColorBox,
+        // ContextMenuControl, Control.DrawDebug, Combobox) should never
+        // reintroduce a `(batcher) =>` closure: doing so freezes captures and
+        // defeats the gump retained-render cache (commit d3545a639). If this
+        // test fails, the offending file has fallen back onto
+        // AddGumpWithAtlas/AddGumpNoAtlas(Func<...>) — convert it to the typed
+        // AddGumpSprite/AddGumpSpriteTiled/AddGumpNoAtlas(RenderedText, ...)
+        // overloads instead.
+        [Theory]
+        [InlineData("src/ClassicUO.Client/Game/UI/Gumps/BuffGump.cs")]
+        [InlineData("src/ClassicUO.Client/Game/UI/Gumps/AnchorableGump.cs")]
+        [InlineData("src/ClassicUO.Client/Game/UI/Gumps/MenuGump.cs")]
+        [InlineData("src/ClassicUO.Client/Game/UI/Gumps/WorldViewportGump.cs")]
+        [InlineData("src/ClassicUO.Client/Game/UI/Gumps/UseSpellButtonGump.cs")]
+        [InlineData("src/ClassicUO.Client/Game/UI/Controls/ColorBox.cs")]
+        [InlineData("src/ClassicUO.Client/Game/UI/Controls/ContextMenuControl.cs")]
+        [InlineData("src/ClassicUO.Client/Game/UI/Controls/Control.cs")]
+        [InlineData("src/ClassicUO.Client/Game/UI/Controls/Combobox.cs")]
+        public void MigratedFiles_ContainNoBatcherClosures(string relativePath)
+        {
+            string repoRoot = FindRepoRoot();
+            string fullPath = Path.Combine(repoRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
+
+            Assert.True(File.Exists(fullPath), $"Source file not found: {fullPath}");
+
+            string contents = File.ReadAllText(fullPath);
+            // Match `batcher =>` or `(batcher) =>` — either form indicates a
+            // Func<UltimaBatcher2D, bool> closure was reintroduced.
+            var match = Regex.Match(contents, @"\(?\s*batcher\s*\)?\s*=>");
+            Assert.False(
+                match.Success,
+                $"{relativePath} reintroduced a batcher closure (matched: \"{match.Value}\"). " +
+                "Convert it to typed AddGumpSprite/AddGumpSpriteTiled/AddGumpNoAtlas(RenderedText) commands."
+            );
+        }
+
+        private static string FindRepoRoot([CallerFilePath] string callerFile = null)
+        {
+            // Walk up from the test source file until we find the repo root
+            // (identified by the .git directory). This makes the test runnable
+            // regardless of where the test binary lives.
+            var dir = new DirectoryInfo(Path.GetDirectoryName(callerFile));
+            while (dir != null && !Directory.Exists(Path.Combine(dir.FullName, ".git")))
+            {
+                dir = dir.Parent;
+            }
+
+            Assert.NotNull(dir);
+            return dir.FullName;
         }
     }
 }

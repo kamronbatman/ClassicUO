@@ -6,6 +6,7 @@ using ClassicUO.Input;
 using ClassicUO.Renderer;
 using ClassicUO.Utility;
 using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
 using SDL3;
 using System;
@@ -429,24 +430,12 @@ namespace ClassicUO.Game.UI.Controls
             if (IsVisible && CUOEnviroment.Debug)
             {
                 Vector3 hueVector = ShaderHueTranslator.GetHueVector(0);
+                Texture2D pixel = SolidColorTextureCache.GetTexture(Color.Green);
 
-                renderLists.AddGumpNoAtlas
-                (
-                    (batcher) =>
-                    {
-                        batcher.DrawRectangle
-                        (
-                            SolidColorTextureCache.GetTexture(Color.Green),
-                            x,
-                            y,
-                            Width,
-                            Height,
-                            hueVector,
-                            layerDepth
-                        );
-                        return true;
-                    }
-                );
+                renderLists.AddGumpSprite(pixel, new Rectangle(x, y, Width, 1), hueVector, layerDepth); // top
+                renderLists.AddGumpSprite(pixel, new Rectangle(x + Width - 1, y, 1, Height), hueVector, layerDepth); // right
+                renderLists.AddGumpSprite(pixel, new Rectangle(x, y + Height - 1, Width, 1), hueVector, layerDepth); // bottom
+                renderLists.AddGumpSprite(pixel, new Rectangle(x, y, 1, Height), hueVector, layerDepth); // left
             }
         }
 
